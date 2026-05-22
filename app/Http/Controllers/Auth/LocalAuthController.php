@@ -1,0 +1,24 @@
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+
+class LocalAuthController extends Controller
+{
+    public function login(Request $request)
+    {
+        $credentials = $request->validate([
+            'username' => 'required',
+            'password' => 'required'
+        ]);
+
+        if (! Auth::attempt($credentials)) {
+            return back()->withErrors(['username' => 'Invalid login']);
+        }
+
+        return redirect()->route('dashboard');
+    }
+}
