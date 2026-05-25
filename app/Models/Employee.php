@@ -17,6 +17,7 @@ class Employee extends Model
 
     protected $casts = [
         'deptCode'      => 'string',
+        'deptName'      => 'string',
         'payGrade'      => 'string',
         'jobCode'       => 'string',
         'jobTitle'      => 'string',

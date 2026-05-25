@@ -29,7 +29,12 @@ use App\Http\Controllers\{
     MedicalApprovalController,
     EmployeeEffectiveController,
     EmployeeImportController,
-    EmployeeTerminationController
+    EmployeeTerminationController,
+    HolidayController,
+    EmployeePayslipController,
+    ReportController,
+    ReportBuilderController,
+    ReportMetadataController
 };
 use App\Http\Controllers\Api\BiometricLogController;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
@@ -85,23 +90,59 @@ Route::middleware(['auth', 'verified'])->group(function () {
     });
 
     // --------------------- Employee ---------------------
-    Route::prefix('employees')->group(function () {
-        Route::get('/', [EmployeeProfileController::class, 'index'])->name('employees.index');
-        Route::get('/{employee}', [EmployeeProfileController::class, 'show'])->name('employees.profile');
+   Route::prefix('employees')->group(function () {
+
+        Route::get('/', [EmployeeProfileController::class, 'index'])
+            ->name('employees.index');
+
+        /*
+        |--------------------------------------------------------------------------
+        | PAYSLIPS
+        |--------------------------------------------------------------------------
+        */
+
+        Route::get('/payslips', [EmployeePayslipController::class,'index'])
+            ->name('employees.payslips');
+
+        Route::get('/payslips/{id}/download', [EmployeePayslipController::class,'download'])
+            ->name('employee.payslips.download');
+
+        /*
+        |--------------------------------------------------------------------------
+        | EMPLOYEE PROFILE
+        |--------------------------------------------------------------------------
+        */
+
+        Route::get('/{employee}', [EmployeeProfileController::class, 'show'])
+            ->name('employees.profile');
 
         // Government IDs
-        Route::put('/{employee}/government-ids', [EmployeeController::class, 'updateGovernmentIds'])->name('employees.update.government');
+        Route::put('/{employee}/government-ids', [EmployeeController::class, 'updateGovernmentIds'])
+            ->name('employees.update.government');
 
         // Editable Sections
-        Route::put('/{employee}/employment', [EmployeeController::class, 'updateEmployment'])->name('employees.update.employment');
-        Route::put('/{employee}/compensation', [EmployeeController::class, 'updateCompensation'])->name('employees.update.compensation');
-        Route::put('/{employee}/personal', [EmployeeController::class, 'updatePersonal'])->name('employees.update.personal');
-        Route::put('/{employee}/contact', [EmployeeController::class, 'updateContact'])->name('employees.update.contact');
-        Route::put('/{employee}/address', [EmployeeController::class, 'updateAddress'])->name('employees.update.address');
+        Route::put('/{employee}/employment', [EmployeeController::class, 'updateEmployment'])
+            ->name('employees.update.employment');
 
-        Route::post('/employees/{empnum}/terminate',[EmployeeTerminationController::class, 'terminate'])->name('employees.terminate');
-        Route::post('/employees/{empnum}/rehire',[EmployeeTerminationController::class, 'rehire'])->name('employees.rehire');
+        Route::put('/{employee}/compensation', [EmployeeController::class, 'updateCompensation'])
+            ->name('employees.update.compensation');
+
+        Route::put('/{employee}/personal', [EmployeeController::class, 'updatePersonal'])
+            ->name('employees.update.personal');
+
+        Route::put('/{employee}/contact', [EmployeeController::class, 'updateContact'])
+            ->name('employees.update.contact');
+
+        Route::put('/{employee}/address', [EmployeeController::class, 'updateAddress'])
+            ->name('employees.update.address');
+
+        Route::post('/{empnum}/terminate',[EmployeeTerminationController::class, 'terminate'])
+            ->name('employees.terminate');
+
+        Route::post('/{empnum}/rehire',[EmployeeTerminationController::class, 'rehire'])
+            ->name('employees.rehire');
     });
+
     Route::post('/employee/employment', [EmploymentController::class, 'store']);
     Route::post('/employees/{employee}/{section}',[EmployeeEffectiveController::class, 'store'])->name('employees.effective.store');
 
@@ -182,6 +223,11 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     // --------------------- Admin Payroll ---------------------
     Route::prefix('admin')->group(function () {
+        Route::middleware('can:manage holiday')->group(function () {
+            Route::get('/holidays', [HolidayController::class, 'index'])->name('holidays.index');
+            Route::post('/holidays/store', [HolidayController::class, 'store']);
+            Route::post('/holidays/import', [HolidayController::class, 'import']);
+        });
         Route::middleware('can:manage employees')->group(function () {
             Route::get('/employees/create', [EmployeeController::class, 'create'])->name('employees.create');
             Route::post('/employees/modal-store', [EmployeeController::class, 'modalStore'])->name('employees.modalStore');
@@ -263,7 +309,27 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     });
 });
+/*
+Route::middleware(['auth'])->prefix('reports')->group(function () {
 
+        Route::get('/', [ReportController::class, 'index'])->name('reports.index');
+        Route::get('/create', [ReportController::class, 'create'])->name('reports.create');
+        Route::post('/', [ReportController::class, 'store'])->name('reports.store');
+        Route::get('/{report}', [ReportController::class, 'show'])->name('reports.show');
+        Route::get('/{report}/edit', [ReportController::class, 'edit'])->name('reports.edit');
+        Route::put('/{report}', [ReportController::class, 'update'])->name('reports.update');
+        Route::delete('/{report}', [ReportController::class, 'destroy'])->name('reports.destroy');
+        Route::post('/{report}/share', [ReportController::class, 'share'])->name('reports.share');
+    });
+*/
+Route::middleware(['auth'])->prefix('reports')->group(function () {
+
+        Route::get('/', [ReportBuilderController::class,'index'])->name('reports.index');
+        Route::get('/create', [ReportBuilderController::class,'create'])->name('reports.create');
+        Route::post('/', [ReportBuilderController::class,'store'])->name('reports.store');
+        Route::get('/{report}', [ReportBuilderController::class,'show'])->name('reports.show');
+        Route::get('/report-metadata',ReportMetadataController::class);
+    });
 
 
 // --------------------- Biometric Processor ---------------------

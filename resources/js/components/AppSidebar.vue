@@ -30,6 +30,8 @@ import {
     HandCoins,
     Settings,
     Wallet,
+    CalendarHeart,
+    LucideScanQrCode,
 } from 'lucide-vue-next';
 
 import AppLogo from './AppLogo.vue';
@@ -55,6 +57,7 @@ const canManageTeam = user?.permissions?.includes('manage team') ?? false;
 const canManagePayroll = user?.permissions?.includes('manage payroll') ?? false;
 const canManageMedical = user?.permissions?.includes('manage medical') ?? false;
 const canManageEmployees = user?.permissions?.includes('manage employees') ?? false;
+const canManageHoliday = user?.permissions?.includes('manage holiday') ?? false;
 
 /**
  * MAIN NAVIGATION
@@ -64,6 +67,8 @@ const mainNavItems: NavItem[] = [
     { title: 'Timekeeping', href: route('timekeeping'), icon: Clock },
     { title: 'Medical Re-imbursement', href: route('medical'), icon: BriefcaseMedical },
     { title: 'File TimeOff', href: route('leaves.create'), icon: TimerOff },
+    { title: 'Payslip', href: route('employees.payslips'), icon: Banknote },
+    { title: 'Reports', href: route('reports.index'), icon: BookOpen },
 ];
 
 /**
@@ -133,11 +138,35 @@ if (payrollChildren.length > 0) {
  */
 const adminChildren: NavItem[] = [];
 
-if (canManageRoles) {
+if (canManageCutOff) {
     adminChildren.push({
-        title: 'Role Management',
-        href: route('users.roles'),
+        title: 'Cut-Off Management',
+        href: route('admin.payroll-cutoff.index'),
+        icon: CalendarRange,
+    });
+}
+
+if (canManageDevice) {
+    adminChildren.push({
+        title: 'Device Management',
+        href: route('devices.index'),
+        icon: LucideScanQrCode,
+    });
+}
+
+if (canManageEmployees) {
+    adminChildren.push({
+        title: 'Employee Management',
+        href: route('employees.index'),
         icon: Users,
+    });
+}
+
+if (canManageHoliday) {
+    adminChildren.push({
+        title: 'Holiday Management',
+        href: route('holidays.index'),
+        icon: CalendarHeart,
     });
 }
 
@@ -149,11 +178,19 @@ if (canManageLeave) {
     });
 }
 
-if (canManageCutOff) {
+if (canManageMedical) {
     adminChildren.push({
-        title: 'Cut-Off Management',
-        href: route('admin.payroll-cutoff.index'),
-        icon: CalendarRange,
+        title: 'MRA Management',
+        href: route('medical.approval.index'),
+        icon: HandCoins,
+    });
+}
+
+if (canManageRoles) {
+    adminChildren.push({
+        title: 'Role Management',
+        href: route('users.roles'),
+        icon: Users,
     });
 }
 
@@ -165,34 +202,10 @@ if (canManageShiftcode) {
     });
 }
 
-if (canManageDevice) {
-    adminChildren.push({
-        title: 'Device Management',
-        href: route('devices.index'),
-        icon: CalendarRange,
-    });
-}
-
 if (canManageTeam) {
     adminChildren.push({
         title: 'Team Management',
         href: route('my-team.index'),
-        icon: Users,
-    });
-}
-
-if (canManageMedical) {
-    adminChildren.push({
-        title: 'MRA Management',
-        href: route('medical.approval.index'),
-        icon: HandCoins,
-    });
-}
-
-if (canManageEmployees) {
-    adminChildren.push({
-        title: 'Employee Management',
-        href: route('employees.index'),
         icon: Users,
     });
 }

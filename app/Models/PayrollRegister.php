@@ -87,5 +87,8 @@ class PayrollRegister extends Model
         'totalDeduction' ,
         'net' ,
         'atm' ,
+        'non_taxable_benefits',
+        'taxable_benefits',
+        'thirteenthMonth'
     ];
 }

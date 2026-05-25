@@ -19,7 +19,9 @@
         "maatwebsite/excel": "^3.1",
         "owen-it/laravel-auditing": "^14.0",
         "socialiteproviders/microsoft-azure": "^5.2",
+        "spatie/browsershot": "^5.3",
         "spatie/laravel-activitylog": "^4.10",
+        "spatie/laravel-pdf": "^2.9",
         "spatie/laravel-permission": "^6.24",
         "tightenco/ziggy": "^2.6"
     },

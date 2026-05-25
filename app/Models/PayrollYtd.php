@@ -16,5 +16,7 @@ class PayrollYtd extends Model
         'philhealth_employee',
         'pagibig_employee',
         'net_pay',
+        'non_taxable_benefits',
+        'taxable_benefits',
     ];
 }

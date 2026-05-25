@@ -536,37 +536,109 @@ class PayrollController extends Controller
     ========================================================= */
     public function processMedical(string $cutoffId)
     {
+        $step = 'medical';
+
         try {
-            PayrollStepsService::start($cutoffId, 'medical');
+
+            PayrollStepsService::start($cutoffId, $step);
 
             DB::transaction(function () use ($cutoffId) {
 
-                PayrollMedical::where('cutoff_id', $cutoffId)->delete();
+                /*
+                |--------------------------------------------------------------------------
+                | GET CUTOFF
+                |--------------------------------------------------------------------------
+                */
+                $cutoff = PayrollCutOff::findOrFail($cutoffId);
 
+                /*
+                |--------------------------------------------------------------------------
+                | DELETE OLD PROCESSED
+                |--------------------------------------------------------------------------
+                */
+                PayrollMedical::where('cutoff_id', $cutoffId)
+                    ->delete();
+
+                /*
+                |--------------------------------------------------------------------------
+                | GET MEDICAL FOR THIS PAYROLL DATE ONLY
+                |--------------------------------------------------------------------------
+                */
                 $records = Medical::where('status', 'APPROVED')
+
                     ->where('processed', 'No')
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | MATCH PAYOUT DATE TO PAYROLL DATE
+                    |--------------------------------------------------------------------------
+                    */
+                    ->whereDate(
+                        'payout',
+                        $cutoff->payrollDate
+                    )
+
                     ->get()
+
                     ->groupBy('empnum');
 
+                /*
+                |--------------------------------------------------------------------------
+                | PROCESS PER EMPLOYEE
+                |--------------------------------------------------------------------------
+                */
                 foreach ($records as $empnum => $rows) {
-                    PayrollMedical::create([
-                        'cutoff_id' => $cutoffId,
-                        'empnum' => $empnum,
-                        'empname' => $rows->first()->empname,
-                        'total_amount' => $rows->sum('amount'),
-                        'processed_at' => now(),
+
+                    $totalAmount =
+                        (float) $rows->sum('amount');
+
+                    PayrollMedical::updateOrCreate(
+                        [
+                            'cutoff_id' => $cutoffId,
+                            'empnum'    => $empnum,
+                        ],
+                        [
+                            'empname'       => $rows->first()->empname,
+                            'total_amount'  => round($totalAmount, 2),
+                            'processed_at'  => now(),
+                        ]
+                    );
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | MARK MEDICAL AS PROCESSED
+                    |--------------------------------------------------------------------------
+                    */
+                    Medical::whereIn(
+                        'id',
+                        $rows->pluck('id')
+                    )->update([
+                        'processed'   => 'Yes',
+                        'approved_at' => now(),
+                        'updated_at'  => now(),
                     ]);
                 }
             });
 
-            PayrollStepsService::complete($cutoffId, 'medical');
+            PayrollStepsService::complete($cutoffId, $step);
 
-            return back()->with('success', 'Medical processed');
+            return back()->with(
+                'success',
+                'Medical processed successfully.'
+            );
 
         } catch (\Exception $e) {
-            PayrollStepsService::fail($cutoffId, 'medical', $e->getMessage());
 
-            return back()->with('error', $e->getMessage());
+            PayrollStepsService::fail(
+                $cutoffId,
+                $step,
+                $e->getMessage()
+            );
+
+            return back()->with(
+                'error',
+                $e->getMessage()
+            );
         }
     }
 
@@ -769,355 +841,533 @@ class PayrollController extends Controller
 
     }
 
-public function processPayroll(Request $request, int $cutoffId)
-{
-    //$taxationType = $request->input('payrollType', 'Semi-Monthly');
+    public function processPayroll(Request $request, int $cutoffId)
+    {
+        DB::transaction(function () use ($cutoffId) {
 
-    DB::transaction(function () use ($cutoffId) {
+            $cutoff = PayrollCutOff::findOrFail($cutoffId);
 
-        $cutoff = PayrollCutOff::findOrFail($cutoffId);
-        $payday = Carbon::parse($cutoff->payrollDate)->day;
-        $month = Carbon::parse($cutoff->payrollDate)->month;
-        $year = Carbon::parse($cutoff->payrollDate)->year;
-
-        $taxMode = ($month <= 6)
-            ? 'Semi-Monthly'
-            : 'Annual';
-
-        /*
-        |--------------------------------------------------------------------------
-        | 1. Main Query (single fetch / optimized)
-        |--------------------------------------------------------------------------
-        */
-        $employees = DB::table('timekeeping_processes as tk')
-            ->join('employees as e', 'e.empnum', '=', 'tk.empnum')
-            ->join('employee_compensations as c', 'c.employee_id', '=', 'e.id')
-            ->leftJoin('employee_personal_infos as p', 'p.employee_id', '=', 'e.id')
-
-            ->leftJoin('sss_contributions as sss', function ($join) {
-                $join->on('sss.empnum', '=', 'e.empnum');
-            })
-
-            ->leftJoin('pag_ibig_contributions as hdmf', function ($join) {
-                $join->on('hdmf.empnum', '=', 'e.empnum');
-            })
-
-            ->leftJoin('philhealth_contributions as phil', function ($join) {
-                $join->on('phil.empnum', '=', 'e.empnum');
-            })
-
-            ->where('tk.payroll_cut_offs_id', $cutoffId)
-
-            ->select([
-                'e.id as employee_id',
-                'e.empnum',
-                'e.name as empname',
-                'e.standard_hours',
-
-                'c.base_salary',
-                'c.pay_type',
-                'c.factor',
-
-                'p.account_number',
-
-                'tk.*',
-
-                DB::raw('COALESCE(sss.employee,0) as sss_ee'),
-                DB::raw('COALESCE(sss.employer,0) as sss_er'),
-                DB::raw('COALESCE(sss.ec,0) as sss_ec'),
-
-                DB::raw('COALESCE(hdmf.employee,0) as hdmf_ee'),
-                DB::raw('COALESCE(hdmf.employer,0) as hdmf_er'),
-
-                DB::raw('COALESCE(phil.employee,0) as phil_ee'),
-                DB::raw('COALESCE(phil.employer,0) as phil_er'),
-            ])
-            ->get();
-
-        /*
-        |--------------------------------------------------------------------------
-        | 2. Preload Benefits / Income / Deductions
-        |--------------------------------------------------------------------------
-        */
-        $benefits = DB::table('employee_benefits')
-            ->where('payday', $payday)
-            ->get()
-            ->groupBy('employee_id');
-
-        $otherIncome = DB::table('other_incomes')
-            ->where('cutoff_id', $cutoffId)
-            ->get()
-            ->groupBy('empnum');
-
-        $deductions = DB::table('employee_deductions')
-            ->where('cutoff_id', $cutoffId)
-            ->get()
-            ->groupBy('empnum');
-
-        /*
-        |--------------------------------------------------------------------------
-        | 3. Process each employee
-        |--------------------------------------------------------------------------
-        */
-        foreach ($employees as $row) {
+            $payday = Carbon::parse($cutoff->payrollDate)->day;
+            $month  = Carbon::parse($cutoff->payrollDate)->month;
+            $year   = Carbon::parse($cutoff->payrollDate)->year;
 
             /*
             |--------------------------------------------------------------------------
-            | Reset Values per employee (IMPORTANT)
+            | Withholding Mode
             |--------------------------------------------------------------------------
             */
-            $busMarshallAllowance = 0;
-            $monthlyHomeSubsidy = 0;
-            $cashGift = 0;
-            $ltiCashAwards = 0;
-            $retentionBonus = 0;
-
-            $sssLoan = 0;
-            $coopLoan = 0;
-            $hdmfLoan = 0;
-            $employeeSavings = 0;
-            $taxAdjustment = 0;
-
-            $uniformAllowance = 0;
-            $gasAllowance = 0;
-            $riceAllowance = 0;
-            $laundryAllowance = 0;
+            $withholdingMode =
+                $month <= 6
+                    ? 'Semi-Monthly'
+                    : 'Annual';
 
             /*
             |--------------------------------------------------------------------------
-            | Base Rates
+            | Employees
             |--------------------------------------------------------------------------
             */
-            $annualSalary = (float) $row->base_salary;
-            $factor       = max((float) $row->factor, 1);
+            $employees = DB::table('timekeeping_processes as tk')
 
-            $monthlyRate = $annualSalary / 12;
-            $hourlyRate  = $monthlyRate / $factor;
-            $basicPay    = $monthlyRate / 2;
+                ->join('employees as e', 'e.empnum', '=', 'tk.empnum')
+
+                ->join(
+                    'employee_compensations as c',
+                    'c.employee_id',
+                    '=',
+                    'e.id'
+                )
+
+                ->leftJoin(
+                    'employee_personal_infos as p',
+                    'p.employee_id',
+                    '=',
+                    'e.id'
+                )
+
+                ->leftJoin('sss_contributions as sss', function ($join) {
+                    $join->on('sss.empnum', '=', 'e.empnum');
+                })
+
+                ->leftJoin('pag_ibig_contributions as hdmf', function ($join) {
+                    $join->on('hdmf.empnum', '=', 'e.empnum');
+                })
+
+                ->leftJoin('philhealth_contributions as phil', function ($join) {
+                    $join->on('phil.empnum', '=', 'e.empnum');
+                })
+
+                ->where('tk.payroll_cut_offs_id', $cutoffId)
+
+                ->select([
+                    'e.id as employee_id',
+                    'e.empnum',
+                    'e.name as empname',
+
+                    'c.base_salary',
+                    'c.pay_type',
+                    'c.factor',
+
+                    'p.account_number',
+
+                    'tk.*',
+
+                    DB::raw('COALESCE(sss.employee,0) as sss_ee'),
+                    DB::raw('COALESCE(sss.employer,0) as sss_er'),
+                    DB::raw('COALESCE(sss.ec,0) as sss_ec'),
+
+                    DB::raw('COALESCE(hdmf.employee,0) as hdmf_ee'),
+                    DB::raw('COALESCE(hdmf.employer,0) as hdmf_er'),
+
+                    DB::raw('COALESCE(phil.employee,0) as phil_ee'),
+                    DB::raw('COALESCE(phil.employer,0) as phil_er'),
+                ])
+
+                ->get();
 
             /*
             |--------------------------------------------------------------------------
-            | Hours
+            | Preload
             |--------------------------------------------------------------------------
             */
-            $lateHours      = (float) ($row->late_reg ?? 0);
-            $undertimeHours = (float) ($row->undertime ?? 0);
-            $absentHours    = (float) ($row->absent ?? 0);
+            $benefits = DB::table('employee_benefits')
+                ->where('payday', $payday)
+                ->get()
+                ->groupBy('employee_id');
 
-            $nsdHours   = (float) ($row->nsd_reg ?? 0);
-            $otHours    = (float) ($row->overtime_reg ?? 0);
-            $nsdOtHours = (float) ($row->overtime_nsd_reg ?? 0);
+            $otherIncome = DB::table('other_incomes')
+                ->where('cutoff_id', $cutoffId)
+                ->get()
+                ->groupBy('empnum');
+
+            $deductions = DB::table('employee_deductions')
+                ->where('cutoff_id', $cutoffId)
+                ->get()
+                ->groupBy('empnum');
 
             /*
             |--------------------------------------------------------------------------
-            | Deductions
+            | Process Employees
             |--------------------------------------------------------------------------
             */
-            $lateDeduction      = $hourlyRate * $lateHours;
-            $undertimeDeduction = $hourlyRate * $undertimeHours;
-            $absentDeduction    = $hourlyRate * $absentHours;
+            foreach ($employees as $row) {
 
-            /*
-            |--------------------------------------------------------------------------
-            | Earnings
-            |--------------------------------------------------------------------------
-            */
-            $nsdPay   = $hourlyRate * $nsdHours;
-            $otPay    = $hourlyRate * $otHours * 1.25;
-            $nsdOtPay = $hourlyRate * $nsdOtHours * 0.15;
+                /*
+                |--------------------------------------------------------------------------
+                | Base Rates
+                |--------------------------------------------------------------------------
+                */
+                $annualSalary = (float) $row->base_salary;
 
-            /*
-            |--------------------------------------------------------------------------
-            | Benefits
-            |--------------------------------------------------------------------------
-            */
-            if (isset($benefits[$row->employee_id])) {
-                foreach ($benefits[$row->employee_id] as $benefit) {
+                $factor = max((float) $row->factor, 1);
 
-                    $amount = $benefit->amount / 12;
+                $monthlyRate = $annualSalary / 12;
 
-                    match ($benefit->name) {
-                        'UNIFORM_ALLOWANCE' => $uniformAllowance = $amount,
-                        'FUEL'              => $gasAllowance = $amount,
-                        'RICE'              => $riceAllowance = $amount,
-                        'LAUNDRY_ALLOWANCE' => $laundryAllowance = $amount,
-                        default             => null,
-                    };
+                $hourlyRate = $monthlyRate / $factor;
+
+                $basicPay = $monthlyRate / 2;
+
+                /*
+                |--------------------------------------------------------------------------
+                | Hours
+                |--------------------------------------------------------------------------
+                */
+                $lateHours      = (float) ($row->late_reg ?? 0);
+                $undertimeHours = (float) ($row->undertime ?? 0);
+                $absentHours    = (float) ($row->absent ?? 0);
+
+                $nsdHours       = (float) ($row->nsd_reg ?? 0);
+                $otHours        = (float) ($row->overtime_reg ?? 0);
+                $nsdOtHours     = (float) ($row->overtime_nsd_reg ?? 0);
+
+                /*
+                |--------------------------------------------------------------------------
+                | Deductions
+                |--------------------------------------------------------------------------
+                */
+                $lateDeduction =
+                    $hourlyRate * $lateHours;
+
+                $undertimeDeduction =
+                    $hourlyRate * $undertimeHours;
+
+                $absentDeduction =
+                    $hourlyRate * $absentHours;
+
+                /*
+                |--------------------------------------------------------------------------
+                | Earnings
+                |--------------------------------------------------------------------------
+                */
+                $nsdPay =
+                    $hourlyRate * $nsdHours;
+
+                $otPay =
+                    $hourlyRate * $otHours * 1.25;
+
+                $nsdOtPay =
+                    $hourlyRate * $nsdOtHours * 0.15;
+
+                /*
+                |--------------------------------------------------------------------------
+                | Benefits
+                |--------------------------------------------------------------------------
+                */
+                $uniformAllowance = 0;
+                $gasAllowance = 0;
+                $riceAllowance = 0;
+                $laundryAllowance = 0;
+
+                if (isset($benefits[$row->employee_id])) {
+
+                    foreach ($benefits[$row->employee_id] as $benefit) {
+
+                        $amount = $benefit->amount / 12;
+
+                        match ($benefit->name) {
+
+                            'UNIFORM_ALLOWANCE'
+                                => $uniformAllowance = $amount,
+
+                            'FUEL'
+                                => $gasAllowance = $amount,
+
+                            'RICE'
+                                => $riceAllowance = $amount,
+
+                            'LAUNDRY_ALLOWANCE'
+                                => $laundryAllowance = $amount,
+
+                            default => null,
+                        };
+                    }
                 }
-            }
 
-            /*
-            |--------------------------------------------------------------------------
-            | Other Income
-            |--------------------------------------------------------------------------
-            */
-            if (isset($otherIncome[$row->empnum])) {
-                foreach ($otherIncome[$row->empnum] as $income) {
+                /*
+                |--------------------------------------------------------------------------
+                | Other Income
+                |--------------------------------------------------------------------------
+                */
+                $busMarshallAllowance = 0;
+                $monthlyHomeSubsidy = 0;
 
-                    match ($income->income_type) {
-                        'Bus Marshal'           => $busMarshallAllowance = $income->amount,
-                        'Monthly Home Subsidy'  => $monthlyHomeSubsidy = $income->amount,
-                        'Cash Gift'             => $cashGift = $income->amount,
-                        'LTI Cash Awards'       => $ltiCashAwards = $income->amount,
-                        'Retention Bonus'       => $retentionBonus = $income->amount,
-                        default                 => null,
-                    };
+                $thirteenthMonth = 0;
+                $otherBenefits = 0;
+
+                if (isset($otherIncome[$row->empnum])) {
+
+                    foreach ($otherIncome[$row->empnum] as $income) {
+
+                        switch ($income->income_type) {
+
+                            case '13th Month Pay':
+                                $thirteenthMonth += $income->amount;
+                                break;
+
+                            case 'Cash Gift':
+                            case 'LTI Cash Awards':
+                            case 'Retention Bonus':
+                                $otherBenefits += $income->amount;
+                                break;
+
+                            case 'Bus Marshal':
+                                $busMarshallAllowance += $income->amount;
+                                break;
+
+                            case 'Monthly Home Subsidy':
+                                $monthlyHomeSubsidy += $income->amount;
+                                break;
+                        }
+                    }
                 }
-            }
 
-            /*
-            |--------------------------------------------------------------------------
-            | Deductions
-            |--------------------------------------------------------------------------
-            */
-            if (isset($deductions[$row->empnum])) {
-                foreach ($deductions[$row->empnum] as $deduction) {
+                /*
+                |--------------------------------------------------------------------------
+                | Previous Benefits YTD
+                |--------------------------------------------------------------------------
+                */
+                $previousBenefits = DB::table('payroll_ytds')
+                    ->where('empnum', $row->empnum)
+                    ->where('year', $year)
+                    ->where('cutoff_id', '<', $cutoffId)
+                    ->orderByDesc('cutoff_id')
+                    ->value('non_taxable_benefits') ?? 0;
 
-                    match ($deduction->deduction_type) {
-                        'SSS Salary Loan' => $sssLoan = $deduction->amount,
-                        'Coop Loan'       => $coopLoan = $deduction->amount,
-                        'Employee Savings'=> $employeeSavings = $deduction->amount,
-                        'Pag-Ibig Loan'   => $hdmfLoan = $deduction->amount,
-                        'Tax Adjustment'  => $taxAdjustment = $deduction->amount,
-                        default           => null,
-                    };
+                /*
+                |--------------------------------------------------------------------------
+                | 90K Shield
+                |--------------------------------------------------------------------------
+                */
+                $currentBenefits =
+                    $thirteenthMonth +
+                    $otherBenefits;
+
+                $remainingShield =
+                    max(90000 - $previousBenefits, 0);
+
+                $nonTaxableBenefits =
+                    min($currentBenefits, $remainingShield);
+
+                $taxableBenefits =
+                    max($currentBenefits - $remainingShield, 0);
+
+                /*
+                |--------------------------------------------------------------------------
+                | Employee Deductions
+                |--------------------------------------------------------------------------
+                */
+                $sssLoan = 0;
+                $coopLoan = 0;
+                $hdmfLoan = 0;
+                $employeeSavings = 0;
+                $taxAdjustment = 0;
+
+                if (isset($deductions[$row->empnum])) {
+
+                    foreach ($deductions[$row->empnum] as $deduction) {
+
+                        match ($deduction->deduction_type) {
+
+                            'SSS Salary Loan'
+                                => $sssLoan = $deduction->amount,
+
+                            'Coop Loan'
+                                => $coopLoan = $deduction->amount,
+
+                            'Employee Savings'
+                                => $employeeSavings = $deduction->amount,
+
+                            'Pag-Ibig Loan'
+                                => $hdmfLoan = $deduction->amount,
+
+                            'Tax Adjustment'
+                                => $taxAdjustment = $deduction->amount,
+
+                            default => null,
+                        };
+                    }
                 }
+
+                /*
+                |--------------------------------------------------------------------------
+                | Mandatory Contributions
+                |--------------------------------------------------------------------------
+                */
+                $mandatory =
+                    $row->sss_ee +
+                    $row->hdmf_ee +
+                    $row->phil_ee;
+
+                /*
+                |--------------------------------------------------------------------------
+                | Gross
+                |--------------------------------------------------------------------------
+                */
+                $gross =
+                    $basicPay +
+                    $nsdPay +
+                    $otPay +
+                    $nsdOtPay +
+
+                    $busMarshallAllowance +
+                    $monthlyHomeSubsidy +
+
+                    $taxableBenefits -
+
+                    $lateDeduction -
+                    $undertimeDeduction -
+                    $absentDeduction;
+
+                /*
+                |--------------------------------------------------------------------------
+                | De Minimis
+                |--------------------------------------------------------------------------
+                */
+                $deminimis =
+                    $uniformAllowance +
+                    $gasAllowance +
+                    $riceAllowance +
+                    $laundryAllowance;
+
+                /*
+                |--------------------------------------------------------------------------
+                | Taxable Income
+                |--------------------------------------------------------------------------
+                */
+                $taxableIncome =
+                    $gross - $mandatory;
+
+                /*
+                |--------------------------------------------------------------------------
+                | Withholding Tax
+                |--------------------------------------------------------------------------
+                */
+                if ($withholdingMode === 'Semi-Monthly') {
+
+                    $withholdingTax =
+                        $this->computeWithholdingTax(
+                            $taxableIncome,
+                            'Semi-Monthly'
+                        );
+
+                } else {
+
+                    $previousYtd = DB::table('payroll_ytds')
+
+                        ->where('empnum', $row->empnum)
+                        ->where('year', $year)
+                        ->where('cutoff_id', '<', $cutoffId)
+
+                        ->selectRaw('
+                            COALESCE(MAX(taxable_income),0) as taxable_income,
+                            COALESCE(MAX(withholding_tax),0) as withholding_tax
+                        ')
+
+                        ->first();
+
+                    $annualTaxableIncome =
+                        $previousYtd->taxable_income +
+                        $taxableIncome;
+
+                    $annualTax =
+                        $this->computeWithholdingTax(
+                            $annualTaxableIncome,
+                            'Monthly'
+                        );
+
+                    $withholdingTax =
+                        max(
+                            $annualTax -
+                            $previousYtd->withholding_tax,
+                            0
+                        );
+                }
+
+                /*
+                |--------------------------------------------------------------------------
+                | Total Deductions
+                |--------------------------------------------------------------------------
+                */
+                $totalDeduction =
+                    $mandatory +
+                    $lateDeduction +
+                    $undertimeDeduction +
+                    $absentDeduction +
+                    $sssLoan +
+                    $coopLoan +
+                    $hdmfLoan +
+                    $employeeSavings +
+                    $taxAdjustment +
+                    $withholdingTax;
+
+                /*
+                |--------------------------------------------------------------------------
+                | Net
+                |--------------------------------------------------------------------------
+                */
+                $net =
+                    $gross +
+                    $deminimis +
+                    $nonTaxableBenefits -
+                    $totalDeduction;
+
+                /*
+                |--------------------------------------------------------------------------
+                | Save Payroll Register
+                |--------------------------------------------------------------------------
+                */
+                PayrollRegister::updateOrCreate(
+
+                    [
+                        'cutoff_id' => $cutoffId,
+                        'empnum' => $row->empnum,
+                    ],
+
+                    [
+                        'empname' => $row->empname,
+                        'accountNumber' => $row->account_number,
+
+                        'gross' => round($gross, 2),
+                        'employeeTax' => round($withholdingTax, 2),
+                        'totalDeduction' => round($totalDeduction, 2),
+                        'net' => round($net, 2),
+                        'atm' => round($net, 2),
+
+                        'basic_pay' => round($basicPay, 2),
+
+                        'nsdReg' => round($nsdPay, 2),
+                        'ot' => round($otPay, 2),
+                        'nsdOt' => round($nsdOtPay, 2),
+
+                        'uniformClothingAllowance' => round($uniformAllowance, 2),
+                        'gasAllowance' => round($gasAllowance, 2),
+                        'riceAllowance' => round($riceAllowance, 2),
+                        'laundryAllowance' => round($laundryAllowance, 2),
+
+                        'busMarshallAllowance' => round($busMarshallAllowance, 2),
+                        'monthlyHomeSubsidy' => round($monthlyHomeSubsidy, 2),
+
+                        'sssEmployee' => round($row->sss_ee, 2),
+                        'philhealthEe' => round($row->phil_ee, 2),
+                        'pagibigEe' => round($row->hdmf_ee, 2),
+
+                        'late' => round($lateDeduction, 2),
+                        'undertime' => round($undertimeDeduction, 2),
+                        'absent' => round($absentDeduction, 2),
+
+                        'thirteenthMonth' => round($thirteenthMonth, 2),
+                        'nonTaxableBenefits' => round($nonTaxableBenefits, 2),
+                        'taxableBenefits' => round($taxableBenefits, 2),
+                    ]
+                );
+
+                /*
+                |--------------------------------------------------------------------------
+                | Update YTD
+                |--------------------------------------------------------------------------
+                */
+                /*
+                $this->updatePayrollYtd(
+                    $cutoffId,
+                    $year,
+                    $row,
+                    $gross,
+                    $taxableIncome,
+                    $withholdingTax,
+                    $net,
+                    $nonTaxableBenefits,
+                    $taxableBenefits
+                );
+                */
+                $this->updatePayrollYtd(
+                    cutoffId: $cutoff->id,
+                    year: $year,
+                    row: $row,
+
+                    basicPay: $basicPay,
+
+                    grossPay: $gross,
+
+                    totalIncome:
+                        $gross +
+                        $deminimis +
+                        $nonTaxableBenefits,
+
+                    withholdingTax: $withholdingTax,
+
+                    totalDeduction: $totalDeduction,
+
+                    netPay: $net
+                );
             }
+        });
 
-            /*
-            |--------------------------------------------------------------------------
-            | Totals
-            |--------------------------------------------------------------------------
-            */
-            $mandatory = $row->sss_ee + $row->hdmf_ee + $row->phil_ee + $row->sss_ec;
+        PayrollStepsService::complete($cutoffId, 'payroll');
 
-            $gross =
-                $basicPay +
-                $nsdPay +
-                $otPay +
-                $nsdOtPay +
-                $busMarshallAllowance +
-                $monthlyHomeSubsidy +
-                $cashGift +
-                $ltiCashAwards +
-                $retentionBonus -
-
-                $lateDeduction -
-                $undertimeDeduction -
-                $absentDeduction;
-
-            $deminimis =
-                $uniformAllowance +
-                $gasAllowance +
-                $riceAllowance +
-                $laundryAllowance +
-                ($row->meal ?? 0) +
-                ($row->adjusted_meal ?? 0);
-
-            $taxableIncome = $gross - $mandatory;
-
-            $withholdingTax = $this->computeWithholdingTax(
-                $taxableIncome,
-                $taxMode
-            );
-
-            $totalDeduction =
-                $mandatory +
-                $lateDeduction +
-                $undertimeDeduction +
-                $absentDeduction +
-                $sssLoan +
-                $coopLoan +
-                $hdmfLoan +
-                $employeeSavings +
-                $taxAdjustment +
-                $withholdingTax;
-
-            $net = $gross + $deminimis - $totalDeduction;
-
-            /*
-            |--------------------------------------------------------------------------
-            | Duplicate-Proof Save
-            |--------------------------------------------------------------------------
-            */
-            PayrollRegister::updateOrCreate(
-                [
-                    'cutoff_id' => $cutoffId,
-                    'empnum'    => $row->empnum,
-                ],
-                [
-                    'empname'        => $row->empname,
-                    'accountNumber'  => $row->account_number,
-                    'payrollType'    => $row->pay_type,
-                    'factor'         => $factor,
-
-                    'annual_salary'  => $annualSalary,
-                    'monthly_rate'   => $monthlyRate,
-                    'hourly_rate'    => $hourlyRate,
-
-                    'basic_pay'      => $basicPay,
-
-                    'late'           => $lateDeduction,
-                    'undertime'      => $undertimeDeduction,
-                    'absent'         => $absentDeduction,
-
-                    'nsdReg'         => $nsdPay,
-                    'ot'             => $otPay,
-                    'nsdOt'          => $nsdOtPay,
-
-                    'uniformClothingAllowance' => $uniformAllowance,
-                    'gasAllowance'   => $gasAllowance,
-                    'riceAllowance'  => $riceAllowance,
-                    'laundryAllowance'=> $laundryAllowance,
-
-                    'busMarshallAllowance' => $busMarshallAllowance,
-                    'monthlyHomeSubsidy'   => $monthlyHomeSubsidy,
-                    'cashGift'             => $cashGift,
-                    'ltiCashAwards'        => $ltiCashAwards,
-                    'retentionBonus'       => $retentionBonus,
-
-                    'sssEmployee' => $row->sss_ee,
-                    'sssEmployer' => $row->sss_er,
-                    'sssEc'       => $row->sss_ec,
-
-                    'pagibigEe'   => $row->hdmf_ee,
-                    'pagibigEr'   => $row->hdmf_er,
-
-                    'philhealthEe'=> $row->phil_ee,
-                    'philhealthEr'=> $row->phil_er,
-
-                    'sssSalaryLoanAdj' => $sssLoan,
-                    'coopLoan'         => $coopLoan,
-                    'HdmfLoanAdj'      => $hdmfLoan,
-                    'employeeSavings'  => $employeeSavings,
-                    'taxAdjustment'    => $taxAdjustment,
-
-                    'gross'           => $gross,
-                    'employeeTax'     => $withholdingTax,
-                    'totalDeduction'  => $totalDeduction,
-                    'net'             => $net,
-                    'atm'             => $net,
-                ]
-            );
-
-            $this->updatePayrollYtd(
-                $cutoffId,
-                $year,
-                $row,
-                (float) $gross,
-                (float) $taxableIncome,
-                (float) $withholdingTax,
-                (float) $net
-            );
-        }
-
-      
-    });
-
-    PayrollStepsService::complete($cutoffId, 'payroll');
-
-    return back()->with('success', 'Payroll register processed successfully.');
-}
+        return back()->with(
+            'success',
+            'Payroll processed successfully.'
+        );
+    }
 
 public function generatePayslip(Request $request, int $cutoffId)
 {
@@ -1320,60 +1570,183 @@ public function generatePayslip(Request $request, int $cutoffId)
 | ADD THIS METHOD INSIDE PayrollController
 |--------------------------------------------------------------------------
 */
-private function updatePayrollYtd(
-    int $cutoffId,
-    int $year,
-    object $row,
-    float $gross,
-    float $taxableIncome,
-    float $withholdingTax,
-    float $net
-): void
-{
-    /*
-    |--------------------------------------------------------------------------
-    | GET PREVIOUS CUTOFF YTD OF SAME EMPLOYEE / SAME YEAR
-    |--------------------------------------------------------------------------
-    */
-    $previous = DB::table('payroll_ytds')
-        ->where('empnum', $row->empnum)
-        ->where('year', $year)
-        ->where('cutoff_id', '<', $cutoffId)
-        ->orderByDesc('cutoff_id')
-        ->first();
+    private function updatePayrollYtd(
+        int $cutoffId,
+        int $year,
+        object $row,
 
-    $prevGross      = $previous->gross_income ?? 0;
-    $prevTaxable    = $previous->taxable_income ?? 0;
-    $prevTax        = $previous->withholding_tax ?? 0;
-    $prevSss        = $previous->sss_employee ?? 0;
-    $prevPhilhealth = $previous->philhealth_employee ?? 0;
-    $prevPagibig    = $previous->pagibig_employee ?? 0;
-    $prevNet        = $previous->net_pay ?? 0;
+        float $basicPay,
+        float $grossPay,
+        float $totalIncome,
 
-    /*
-    |--------------------------------------------------------------------------
-    | SAVE CURRENT CUTOFF SNAPSHOT YTD
-    |--------------------------------------------------------------------------
-    */
-    DB::table('payroll_ytds')->updateOrInsert(
-        [
-            'empnum'    => $row->empnum,
-            'cutoff_id' => $cutoffId,
-            'year'      => $year,
-        ],
-        [
-            'gross_income'        => round($prevGross + $gross, 2),
-            'taxable_income'      => round($prevTaxable + $taxableIncome, 2),
-            'withholding_tax'     => round($prevTax + $withholdingTax, 2),
-            'sss_employee'        => round($prevSss + $row->sss_ee, 2),
-            'philhealth_employee' => round($prevPhilhealth + $row->phil_ee, 2),
-            'pagibig_employee'    => round($prevPagibig + $row->hdmf_ee, 2),
-            'net_pay'             => round($prevNet + $net, 2),
-            'created_at'          => now(),
-            'updated_at'          => now(),
-        ]
-    );
-}
+        float $withholdingTax,
+        float $totalDeduction,
+
+        float $netPay
+    ): void
+    {
+        /*
+        |--------------------------------------------------------------------------
+        | PREVIOUS YTD
+        |--------------------------------------------------------------------------
+        */
+        $previous = DB::table('payroll_ytds')
+
+            ->where('empnum', $row->empnum)
+            ->where('year', $year)
+            ->where('cutoff_id', '<', $cutoffId)
+
+            ->orderByDesc('cutoff_id')
+
+            ->first();
+
+        /*
+        |--------------------------------------------------------------------------
+        | PREVIOUS VALUES
+        |--------------------------------------------------------------------------
+        */
+        $prevBasicPay =
+            (float) ($previous->basic_pay ?? 0);
+
+        $prevGrossPay =
+            (float) ($previous->gross_pay ?? 0);
+
+        $prevTotalIncome =
+            (float) ($previous->total_income ?? 0);
+
+        $prevSssMpf =
+            (float) ($previous->sss_mpf_employee ?? 0);
+
+        $prevSss =
+            (float) ($previous->sss_employee ?? 0);
+
+        $prevPhilhealth =
+            (float) ($previous->philhealth_employee ?? 0);
+
+        $prevPagibig =
+            (float) ($previous->pagibig_employee ?? 0);
+
+        $prevTax =
+            (float) ($previous->withholding_tax ?? 0);
+
+        $prevTotalDeduction =
+            (float) ($previous->total_deduction ?? 0);
+
+        $prevNet =
+            (float) ($previous->net_pay ?? 0);
+
+        /*
+        |--------------------------------------------------------------------------
+        | CURRENT VALUES
+        |--------------------------------------------------------------------------
+        */
+        $sssMpfEe =
+            (float) ($row->sss_mpf_ee ?? 0);
+
+        $sssEe =
+            (float) ($row->sss_ee ?? 0);
+
+        $philhealthEe =
+            (float) ($row->phil_ee ?? 0);
+
+        $pagibigEe =
+            (float) ($row->hdmf_ee ?? 0);
+
+        /*
+        |--------------------------------------------------------------------------
+        | SAVE YTD
+        |--------------------------------------------------------------------------
+        */
+        DB::table('payroll_ytds')->updateOrInsert(
+
+            [
+                'empnum'    => $row->empnum,
+                'cutoff_id' => $cutoffId,
+                'year'      => $year,
+            ],
+
+            [
+
+                /*
+                |--------------------------------------------------------------------------
+                | EARNINGS
+                |--------------------------------------------------------------------------
+                */
+                'basic_pay' => round(
+                    $prevBasicPay + $basicPay,
+                    2
+                ),
+
+                'gross_pay' => round(
+                    $prevGrossPay + $grossPay,
+                    2
+                ),
+
+                'total_income' => round(
+                    $prevTotalIncome + $totalIncome,
+                    2
+                ),
+
+                /*
+                |--------------------------------------------------------------------------
+                | CONTRIBUTIONS
+                |--------------------------------------------------------------------------
+                */
+                'sss_mpf_employee' => round(
+                    $prevSssMpf + $sssMpfEe,
+                    2
+                ),
+
+                'sss_employee' => round(
+                    $prevSss + $sssEe,
+                    2
+                ),
+
+                'philhealth_employee' => round(
+                    $prevPhilhealth + $philhealthEe,
+                    2
+                ),
+
+                'pagibig_employee' => round(
+                    $prevPagibig + $pagibigEe,
+                    2
+                ),
+
+                /*
+                |--------------------------------------------------------------------------
+                | TAX
+                |--------------------------------------------------------------------------
+                */
+                'withholding_tax' => round(
+                    $prevTax + $withholdingTax,
+                    2
+                ),
+
+                /*
+                |--------------------------------------------------------------------------
+                | TOTAL DEDUCTIONS
+                |--------------------------------------------------------------------------
+                */
+                'total_deduction' => round(
+                    $prevTotalDeduction + $totalDeduction,
+                    2
+                ),
+
+                /*
+                |--------------------------------------------------------------------------
+                | NET PAY
+                |--------------------------------------------------------------------------
+                */
+                'net_pay' => round(
+                    $prevNet + $netPay,
+                    2
+                ),
+
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]
+        );
+    }
 
     private function computeWithholdingTax(int $taxable, string $payrollType)
     {
