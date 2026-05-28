@@ -330,7 +330,7 @@ class EmployeeController extends Controller
 
         return back()->with('success', 'Contact information updated.');
     }
-
+ 
     public function updatePersonal(Request $request, Employee $employee)
     {
         $data = $request->validate([
@@ -452,6 +452,25 @@ class EmployeeController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+
+    public function search(Request $request)
+    {
+        $empnum = $request->query('empnum');
+
+        if (!$empnum) {
+            return response()->json(null, 400);
+        }
+
+        $employee = Employee::where('empnum', $empnum)
+            ->select('id', 'empnum', 'name')
+            ->first();
+
+        if (!$employee) {
+            return response()->json(null, 404);
+        }
+
+        return response()->json($employee);
     }
 
 }

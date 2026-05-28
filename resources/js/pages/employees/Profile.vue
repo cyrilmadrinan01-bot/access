@@ -81,7 +81,7 @@ const sectionData = reactive<Record<string, any>>({
   department_code: "",
   job_code: "",
   manager_empnum: "",
-  status: "ACTIVE",
+  status: "Active",
   hire_date: "",
   effective_start: "",
   termination_date: "",
@@ -387,7 +387,7 @@ const canManageEmployees = user?.permissions?.includes("manage employees") ?? fa
 
         <div v-if="canManageEmployees">
           <button
-            v-if="employee.employment?.status === 'ACTIVE'"
+            v-if="employee.employment?.status === 'Active'"
             @click="openTerminateModal"
             class="px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700"
           >

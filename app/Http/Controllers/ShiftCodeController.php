@@ -84,4 +84,13 @@ class ShiftCodeController extends Controller
 
         return back();
     }
+
+    public function search(Request $request)
+    {
+        $shift = ShiftCode::where('shiftCode', $request->shiftCode)->first();
+
+        return response()->json([
+            'name' => $shift?->name,
+        ]);
+    }
 }

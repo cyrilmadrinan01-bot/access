@@ -34,7 +34,8 @@ use App\Http\Controllers\{
     EmployeePayslipController,
     ReportController,
     ReportBuilderController,
-    ReportMetadataController
+    ReportMetadataController,
+    PicklistController,
 };
 use App\Http\Controllers\Api\BiometricLogController;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
@@ -91,9 +92,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
 
     // --------------------- Employee ---------------------
    Route::prefix('employees')->group(function () {
-
-        Route::get('/', [EmployeeProfileController::class, 'index'])
-            ->name('employees.index');
 
         /*
         |--------------------------------------------------------------------------
@@ -229,9 +227,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::post('/holidays/import', [HolidayController::class, 'import']);
         });
         Route::middleware('can:manage employees')->group(function () {
+            Route::get('/employees', [EmployeeProfileController::class, 'index'])->name('employees.index');
             Route::get('/employees/create', [EmployeeController::class, 'create'])->name('employees.create');
             Route::post('/employees/modal-store', [EmployeeController::class, 'modalStore'])->name('employees.modalStore');
             Route::post('/employees/import', [EmployeeImportController::class, 'import'])->name('employees.import');
+            Route::get('/employees/search', [EmployeeController::class, 'search'])->name('employees.search');
+            //Route::get('/shifts/search', [ShiftCodeController::class, 'search'])->name('shifts.search');
+            Route::get('/shift-codes', function () {
+                return \App\Models\ShiftCode::select('id', 'shiftCode', 'shiftStart', 'shiftEnd')->get();
+            });
+            Route::get('/picklists', [PicklistController::class, 'index']);
         });
 
         Route::middleware('can:manage cutoff')->group(function () {

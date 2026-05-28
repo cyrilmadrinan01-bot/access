@@ -1,9 +1,13 @@
 <script setup lang="ts">
+import { ref, onMounted, watch } from "vue";
 import { router } from "@inertiajs/vue3";
-import { ref } from "vue";
-import AppLayout from "@/layouts/AppLayout.vue";
+import axios from "axios";
 import { route } from "ziggy-js";
+import AppLayout from "@/layouts/AppLayout.vue";
 
+/* ---------------------------------------------
+| Types
+--------------------------------------------- */
 interface Employee {
   id: number;
   empnum: string;
@@ -25,6 +29,39 @@ interface Pagination<T> {
   links: PaginationLink[];
 }
 
+interface PicklistItem {
+  id: number;
+  code: string;
+  label: string;
+}
+
+interface Picklists {
+  company_code: PicklistItem[];
+  department: PicklistItem[];
+  employee_class: PicklistItem[];
+  location: PicklistItem[];
+  country: PicklistItem[];
+  job_code: PicklistItem[];
+  pay_grade: PicklistItem[];
+  employee_status: PicklistItem[];
+  marital_status: PicklistItem[];
+  gender: PicklistItem[];
+  nationality: PicklistItem[];
+  employee_type: PicklistItem[];
+}
+
+interface ShiftCodeItem {
+  id: number;
+  shiftCode: string;
+  shiftStart: string;
+  shiftEnd: string;
+}
+
+const shiftCodes = ref<ShiftCodeItem[]>([]);
+
+/* ---------------------------------------------
+| Props
+--------------------------------------------- */
 const props = defineProps<{
   employees: Pagination<Employee>;
   filters: {
@@ -34,10 +71,16 @@ const props = defineProps<{
   };
 }>();
 
-const activeTab = ref("personal");
+/* ---------------------------------------------
+| UI State
+--------------------------------------------- */
+const showModal = ref(false);
 const showImportModal = ref(false);
-const importFile = ref<File | null>(null);
+const activeTab = ref("personal");
 
+/* ---------------------------------------------
+| Tabs
+--------------------------------------------- */
 const tabs = [
   { key: "personal", label: "Personal Info" },
   { key: "employment", label: "Employment" },
@@ -46,27 +89,16 @@ const tabs = [
   { key: "compensation", label: "Compensation" },
 ];
 
+/* ---------------------------------------------
+| Filters
+--------------------------------------------- */
 const search = ref(props.filters.search ?? "");
 const sort = ref(props.filters.sort ?? "name");
 const direction = ref(props.filters.direction ?? "asc");
-const showModal = ref(false);
 
-// Example dropdown data from DB
-const departments = ref([
-  { code: "HR", name: "Human Resources" },
-  { code: "IT", name: "IT Department" },
-]);
-
-const managers = ref([
-  { empnum: "001", name: "John Doe" },
-  { empnum: "002", name: "Jane Smith" },
-]);
-
-const gender = ref([
-  { code: "M", name: "Male" },
-  { code: "F", name: "Female" },
-]);
-
+/* ---------------------------------------------
+| Form State
+--------------------------------------------- */
 const form = ref({
   empnum: "",
   salutation: "",
@@ -78,6 +110,9 @@ const form = ref({
   deptCode: "",
   jobTitle: "",
   managerId: "",
+  manager_empnum: "",
+  manager_name: "",
+
   salary: 0,
   payGrade: "",
   pay_type: "",
@@ -96,7 +131,7 @@ const form = ref({
   company_code: "",
   department_code: "",
   job_code: "",
-  manager_empnum: "",
+
   status: "Active",
   hire_date: "",
 
@@ -119,18 +154,104 @@ const form = ref({
   shiftCode: "",
   business_title: "",
   standard_hours: "",
-  job_title: "",
 });
 
-const submit = () => {
-  router.post("/admin/employees/modal-store", form.value, {
-    onSuccess: () => {
-      showModal.value = false;
-      // optionally refresh list or reset form
-    },
-  });
+/* ---------------------------------------------
+| Picklists
+--------------------------------------------- */
+const picklists = ref<Picklists>({
+  company_code: [],
+  department: [],
+  employee_class: [],
+  location: [],
+  country: [],
+  job_code: [],
+  pay_grade: [],
+  employee_status: [],
+  marital_status: [],
+  gender: [],
+  nationality: [],
+  employee_type: [],
+});
+
+const loadPicklists = async () => {
+  try {
+    const { data } = await axios.get<Picklists>("/admin/picklists");
+
+    picklists.value = {
+      company_code: data.company_code ?? [],
+      department: data.department ?? [],
+      employee_class: data.employee_class ?? [],
+      location: data.location ?? [],
+      country: data.country ?? [],
+      job_code: data.job_code ?? [],
+      pay_grade: data.pay_grade ?? [],
+      employee_status: data.employee_status ?? [],
+      marital_status: data.marital_status ?? [],
+      gender: data.gender ?? [],
+      nationality: data.nationality ?? [],
+      employee_type: data.employee_type ?? [],
+    };
+  } catch (err) {
+    console.error("Picklist load failed", err);
+  }
 };
 
+/* ---------------------------------------------
+| Manager Lookup
+--------------------------------------------- */
+const managerLoading = ref(false);
+
+const searchManager = async () => {
+  const empnum = form.value.manager_empnum;
+
+  if (!empnum || empnum.length < 3) {
+    form.value.manager_name = "";
+    return;
+  }
+
+  managerLoading.value = true;
+
+  try {
+    const { data } = await axios.get(route("employees.search"), {
+      params: { empnum },
+    });
+
+    form.value.manager_name = data?.name ?? "";
+  } catch (err) {
+    console.error("Manager lookup failed", err);
+    form.value.manager_name = "";
+  } finally {
+    managerLoading.value = false;
+  }
+};
+
+watch(
+  () => form.value.manager_empnum,
+  () => searchManager()
+);
+
+/* ---------------------------------------------
+| Shiftcode Lookup
+--------------------------------------------- */
+const loadShiftCodes = async () => {
+  try {
+    const { data } = await axios.get<ShiftCodeItem[]>("/admin/shift-codes");
+
+    shiftCodes.value = data ?? [];
+  } catch (err) {
+    console.error("Shift codes load failed", err);
+  }
+};
+
+onMounted(() => {
+  loadPicklists();
+  loadShiftCodes();
+});
+
+/* ---------------------------------------------
+| Actions
+--------------------------------------------- */
 const applyFilters = () => {
   router.get(
     route("employees.index"),
@@ -150,7 +271,6 @@ const sortBy = (field: string) => {
     sort.value = field;
     direction.value = "asc";
   }
-
   applyFilters();
 };
 
@@ -158,9 +278,18 @@ const goToProfile = (empnum: string) => {
   router.get(route("employees.profile", empnum));
 };
 
-const goToCreate = () => {
-  router.get(route("employees.create"));
+const submit = () => {
+  router.post("/admin/employees/modal-store", form.value, {
+    onSuccess: () => {
+      showModal.value = false;
+    },
+  });
 };
+
+/* ---------------------------------------------
+| Import
+--------------------------------------------- */
+const importFile = ref<File | null>(null);
 
 const importEmployees = () => {
   if (!importFile.value) return;
@@ -176,6 +305,13 @@ const importEmployees = () => {
     },
   });
 };
+
+/* ---------------------------------------------
+| Lifecycle
+--------------------------------------------- */
+onMounted(() => {
+  loadPicklists();
+});
 </script>
 
 <template>
@@ -404,9 +540,13 @@ const importEmployees = () => {
                         v-model="form.gender"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
                       >
-                        <option disabled value="">Gender</option>
-                        <option v-for="g in gender" :key="g.code" :value="g.code">
-                          {{ g.name }}
+                        <option disabled value="">Select Gender</option>
+                        <option
+                          v-for="item in picklists.gender"
+                          :key="item.id"
+                          :value="item.code"
+                        >
+                          {{ item.label }}
                         </option>
                       </select>
                     </div>
@@ -420,30 +560,51 @@ const importEmployees = () => {
                     </div>
                     <div>
                       <label class="label-style">Country of Birth</label>
-                      <input
+                      <select
                         v-model="form.country_of_birth"
-                        placeholder="Philippines"
-                        type="text"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                      />
+                      >
+                        <option disabled value="">Select Country</option>
+                        <option
+                          v-for="item in picklists.country"
+                          :key="item.id"
+                          :value="item.code"
+                        >
+                          {{ item.label }}
+                        </option>
+                      </select>
                     </div>
                     <div>
                       <label class="label-style">Marital Status</label>
-                      <input
+                      <select
                         v-model="form.marital_status"
-                        placeholder="Single/Married"
-                        type="text"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                      />
+                      >
+                        <option disabled value="">Select Marital Status</option>
+                        <option
+                          v-for="item in picklists.marital_status"
+                          :key="item.id"
+                          :value="item.code"
+                        >
+                          {{ item.label }}
+                        </option>
+                      </select>
                     </div>
                     <div>
                       <label class="label-style">Nationality</label>
-                      <input
+                      <select
                         v-model="form.nationality"
-                        placeholder="Filipino"
-                        type="text"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                      />
+                      >
+                        <option disabled value="">Select Nationality</option>
+                        <option
+                          v-for="item in picklists.nationality"
+                          :key="item.id"
+                          :value="item.code"
+                        >
+                          {{ item.label }}
+                        </option>
+                      </select>
                     </div>
                     <div>
                       <label class="label-style">Bank Name</label>
@@ -472,48 +633,85 @@ const importEmployees = () => {
                   >
                     <div>
                       <label class="label-style">Company Code</label>
-                      <input
+
+                      <select
                         v-model="form.company_code"
-                        placeholder="Company Code"
-                        type="text"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                      />
+                      >
+                        <option disabled value="">Select Company</option>
+
+                        <option
+                          v-for="item in picklists.company_code"
+                          :key="item.id"
+                          :value="item.code"
+                        >
+                          {{ item.code }}
+                        </option>
+                      </select>
                     </div>
                     <div>
                       <label class="label-style">Department Code</label>
-                      <input
+                      <select
                         v-model="form.department_code"
-                        placeholder="Department Code"
-                        type="text"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                      />
+                      >
+                        <option disabled value="">Select Department Code</option>
+                        <option
+                          v-for="item in picklists.department"
+                          :key="item.id"
+                          :value="item.code"
+                        >
+                          {{ item.code }}
+                        </option>
+                      </select>
                     </div>
                     <div>
                       <label class="label-style">Department Name</label>
-                      <input
-                        v-model="form.department_name"
-                        placeholder="Department Name"
-                        type="text"
+                      <select
+                        v-model="form.department_code"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                      />
+                      >
+                        <option disabled value="">Select Department Name</option>
+                        <option
+                          v-for="item in picklists.department"
+                          :key="item.id"
+                          :value="item.code"
+                        >
+                          {{ item.label }}
+                        </option>
+                      </select>
                     </div>
                     <div>
                       <label class="label-style">Job Code</label>
-                      <input
+                      <select
                         v-model="form.job_code"
-                        placeholder="Job Code"
-                        type="text"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                      />
+                      >
+                        <option disabled value="">Select JobCode</option>
+                        <option
+                          v-for="item in picklists.job_code"
+                          :key="item.id"
+                          :value="item.code"
+                        >
+                          {{ item.code }}
+                        </option>
+                      </select>
                     </div>
                     <div>
                       <label class="label-style">Job Title</label>
-                      <input
-                        v-model="form.job_title"
-                        placeholder="Job Title"
-                        type="text"
+                      <select
+                        v-model="form.jobTitle"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                      />
+                      >
+                        <option disabled value="">Select Job Title</option>
+                        <option
+                          v-for="item in picklists.job_code"
+                          :key="item.id"
+                          :value="item.code"
+                        >
+                          {{ item.label }}
+                        </option>
+                      </select>
                     </div>
                     <div>
                       <label class="label-style">Business Title</label>
@@ -526,12 +724,21 @@ const importEmployees = () => {
                     </div>
                     <div>
                       <label class="label-style">Shift Code</label>
-                      <input
+                      <select
                         v-model="form.shiftCode"
-                        placeholder="Shift Code"
-                        type="text"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                      />
+                      >
+                        <option disabled value="">Select Shift Code</option>
+
+                        <option
+                          v-for="shift in shiftCodes"
+                          :key="shift.id"
+                          :value="shift.shiftCode"
+                        >
+                          {{ shift.shiftCode }} ({{ shift.shiftStart }} -
+                          {{ shift.shiftEnd }})
+                        </option>
+                      </select>
                     </div>
                     <div>
                       <label class="label-style">Manager ID</label>
@@ -539,35 +746,52 @@ const importEmployees = () => {
                         v-model="form.manager_empnum"
                         placeholder="Manager empnum"
                         type="text"
+                        @input="searchManager"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
                       />
                     </div>
+
                     <div>
-                      <label class="label-style">Manager ID</label>
+                      <label class="label-style">Manager Name</label>
                       <input
-                        v-model="form.manager_empnum"
-                        placeholder="Manager empnum"
+                        v-model="form.manager_name"
+                        placeholder="Manager name"
                         type="text"
-                        class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
+                        readonly
+                        class="w-full px-3 py-2 rounded-lg border bg-gray-100 dark:bg-gray-700 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100"
                       />
                     </div>
                     <div>
                       <label class="label-style">Employee Class</label>
-                      <input
+                      <select
                         v-model="form.employee_class"
-                        placeholder="Employee Class"
-                        type="text"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                      />
+                      >
+                        <option disabled value="">Select Employee Class</option>
+                        <option
+                          v-for="item in picklists.employee_class"
+                          :key="item.id"
+                          :value="item.code"
+                        >
+                          {{ item.label }}
+                        </option>
+                      </select>
                     </div>
                     <div>
                       <label class="label-style">Employee Type</label>
-                      <input
+                      <select
                         v-model="form.employeeType"
-                        placeholder="Employee Type"
-                        type="text"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
-                      />
+                      >
+                        <option disabled value="">Select Employee Type</option>
+                        <option
+                          v-for="item in picklists.employee_type"
+                          :key="item.id"
+                          :value="item.code"
+                        >
+                          {{ item.label }}
+                        </option>
+                      </select>
                     </div>
                     <div>
                       <label class="label-style">Standard Hours</label>
@@ -585,6 +809,22 @@ const importEmployees = () => {
                         type="date"
                         class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
                       />
+                    </div>
+                    <div>
+                      <label class="label-style">Employee Status</label>
+                      <select
+                        v-model="form.status"
+                        class="w-full px-3 py-2 rounded-lg border bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none transition"
+                      >
+                        <option disabled value="">Select Employee Status</option>
+                        <option
+                          v-for="item in picklists.employee_status"
+                          :key="item.id"
+                          :value="item.code"
+                        >
+                          {{ item.label }}
+                        </option>
+                      </select>
                     </div>
                   </div>
 
