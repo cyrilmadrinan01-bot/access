@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import AppLayout from "@/layouts/AppLayout.vue";
-import { Head, Link } from "@inertiajs/vue3";
+import { Head, Link, router } from "@inertiajs/vue3";
 import { route } from "ziggy-js";
 
 interface Report {
@@ -19,6 +19,14 @@ const breadcrumbs = [
     href: route("reports.index"),
   },
 ];
+
+function deleteReport(id: number) {
+  if (!confirm("Are you sure you want to delete this report?")) return;
+
+  router.delete(route("reports.destroy", id), {
+    preserveScroll: true,
+  });
+}
 </script>
 
 <template>
@@ -102,22 +110,32 @@ const breadcrumbs = [
                 </td>
 
                 <!-- ACTIONS -->
+                <!-- ACTIONS -->
                 <td class="whitespace-nowrap px-6 py-4">
                   <div class="flex justify-end gap-3">
+                    <!-- OPEN -->
                     <Link
                       :href="route('reports.show', report.id)"
                       class="rounded-md px-3 py-1.5 text-sm font-medium text-blue-600 transition hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/40"
                     >
                       Open
                     </Link>
-                    <!--
+
+                    <!-- EDIT -->
                     <Link
                       :href="route('reports.edit', report.id)"
                       class="rounded-md px-3 py-1.5 text-sm font-medium text-amber-600 transition hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/40"
                     >
                       Edit
                     </Link>
--->
+
+                    <!-- DELETE -->
+                    <button
+                      @click="deleteReport(report.id)"
+                      class="rounded-md px-3 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                    >
+                      Delete
+                    </button>
                   </div>
                 </td>
               </tr>

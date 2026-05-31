@@ -29,6 +29,7 @@ class User extends Authenticatable
         'role_ids',
         'employeeStatus',
         'remember_token',
+        'language',
     ];
 
     /**
@@ -88,7 +89,7 @@ class User extends Authenticatable
 
         match ($this->employee->employeeClass) {
             'Manager' => $this->assignRole('manager'),
-            'HR' => $this->assignRole('hr'),
+            'HR' => $this->assignRole('hr'), 
             'Payroll' => $this->assignRole('payroll'),
             default => $this->assignRole('employee'),
         };

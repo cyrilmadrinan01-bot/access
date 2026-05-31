@@ -9,6 +9,19 @@ defineProps<{
     shiftcodes: any[]
 }>()
 
+const days = [
+    'Sunday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+]
+
+const selectedWorkDays = ref<string[]>([])
+const selectedRestDays = ref<string[]>([])
+
 const showModal = ref(false)
 const editing = ref(false)
 
@@ -45,6 +58,10 @@ const form = useForm({
 function openCreate() {
     editing.value = false
     form.reset()
+
+    selectedWorkDays.value = []
+    selectedRestDays.value = []
+
     showModal.value = true
 }
 
@@ -79,11 +96,22 @@ function openEdit(s: any) {
         is_active: s.is_active,
     })
 
+    selectedWorkDays.value = s.workDay
+        ? s.workDay.split('|')
+        : []
+
+    selectedRestDays.value = s.restDay
+        ? s.restDay.split('|')
+        : []
+
     showModal.value = true
 }
 
 
 function submit() {
+    form.workDay = selectedWorkDays.value.join('|')
+    form.restDay = selectedRestDays.value.join('|')
+
     if (editing.value) {
         form.put(`/admin/shiftcodes/${form.id}`, {
             onSuccess: () => {
@@ -331,11 +359,17 @@ const breadcrumbs: BreadcrumbItem[] = [
                   >
                     Work Day(s)
                   </label>
-                  <input
-                    v-model="form.workDay"
-                    class="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:ring-blue-500"
-                    placeholder="Sunday|Monday"
-                  />
+                  <div class="space-y-2">
+                    <label v-for="day in days" :key="day" class="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        :value="day"
+                        v-model="selectedWorkDays"
+                        class="rounded border-gray-300"
+                      />
+                      <span>{{ day }}</span>
+                    </label>
+                  </div>
                 </div>
 
                 <div>
@@ -344,10 +378,21 @@ const breadcrumbs: BreadcrumbItem[] = [
                   >
                     Rest Day(s)
                   </label>
-                  <input
-                    v-model="form.restDay"
-                    class="block w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:ring-blue-500"
-                  />
+                  <div class="space-y-2">
+                    <label
+                      v-for="day in days"
+                      :key="`rest-${day}`"
+                      class="flex items-center gap-2"
+                    >
+                      <input
+                        type="checkbox"
+                        :value="day"
+                        v-model="selectedRestDays"
+                        class="rounded border-gray-300"
+                      />
+                      <span>{{ day }}</span>
+                    </label>
+                  </div>
                 </div>
 
                 <div>

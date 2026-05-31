@@ -43,7 +43,7 @@ class Employee extends Model
 
     public function manager()
     {
-        return $this->belongsTo(Employee::class, 'managerId');
+        return $this->belongsTo(Employee::class, 'manager_empnum');
     }
 
     public function user()
@@ -53,7 +53,7 @@ class Employee extends Model
 
     public function subordinates()
     {
-        return $this->hasMany(Employee::class, 'managerId');
+        return $this->hasMany(Employee::class, 'manager_empnum', 'empnum');
     }
 
     public function allTeamMembers()

@@ -2,12 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
-use Carbon\Carbon;
-use Inertia\Inertia;
-use App\Services\SuccessFactors\EmployeeMapper;
 use App\Models\Employee;
 use App\Models\User;
 use App\Models\EmployeeEmployment;
@@ -15,145 +9,185 @@ use App\Models\EmployeeContact;
 use App\Models\EmployeeAddress;
 use App\Models\EmployeeCompensation;
 use App\Models\EmployeePersonalInfo;
+use App\Services\EmployeeChangeLogger;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Inertia\Inertia;
 use Throwable;
 
 class EmployeeController extends Controller
 {
+    /* =====================================================
+    | CREATE VIEW
+    ===================================================== */
     public function create()
     {
-        return Inertia::render('Employees/Create'); 
+        return Inertia::render('Employees/Create');
     }
 
+    /* =====================================================
+    | CREATE EMPLOYEE
+    ===================================================== */
     public function modalStore(Request $request)
     {
         $validated = $request->validate([
-            'salutation' => ['required', 'string'],
-            'prefix' => ['required', 'string'],
-            'firstName' => ['required', 'string'],
-            'lastName' => ['required', 'string'],
-            'middleName' => ['nullable', 'string'],
-            'nickName' => ['nullable', 'string'],
-            'gender' => ['nullable', 'string'],
-            'birth_date' => ['nullable', 'date'],
-            'country_of_birth' => ['required', 'string'],
-            'marital_status' => ['required', 'string'],
-            'nationality' => ['required', 'string'],
-            'religion' => ['required', 'string'],
-            'bank_name' => ['nullable', 'string'],
-            'account_number' => ['nullable', 'string'],
+            // personal
+            'salutation' => 'required|string',
+            'prefix' => 'required|string',
+            'firstName' => 'required|string',
+            'lastName' => 'required|string',
+            'middleName' => 'nullable|string',
+            'nickName' => 'nullable|string',
+            'gender' => 'nullable|string',
+            'birth_date' => 'nullable|date',
+            'country_of_birth' => 'required|string',
+            'marital_status' => 'required|string',
+            'nationality' => 'required|string',
+            'religion' => 'required|string',
+            'bank_name' => 'nullable|string',
+            'account_number' => 'nullable|string',
 
-            'company_code' => ['required', 'string'],
-            'department_code' => ['required', 'string'],
-            'department_name' => ['required', 'string'],
-            'shiftCode' => ['required', 'string'],
-            'job_code' => ['required', 'string'],
-            'job_title' => ['required', 'string'],
-            'business_title' => ['required', 'string'],
-            'employee_class' => ['required', 'string'],
-            'manager_empnum' => ['required', 'string'],
-            'hire_date' => ['required', 'date'],
-            'status' => ['required', 'string'],
+            // employment
+            'company_code' => 'required|string',
+            'department_code' => 'required|string',
+            'department_name' => 'required|string',
+            'shiftCode' => 'required|string',
+            'job_code' => 'required|string',
+            'job_title' => 'required|string',
+            'business_title' => 'required|string',
+            'employee_class' => 'required|string',
+            'manager_empnum' => 'required|string',
+            'hire_date' => 'required|date',
+            'status' => 'required|string',
 
-            'email' => ['nullable', 'email'],
-            'phone' => ['nullable', 'string'],
-            'mobile' => ['nullable', 'string'],
-            'contact_person' => ['nullable', 'string'],
-            'contact_person_number' => ['nullable', 'string'],
+            // contact
+            'email' => 'nullable|email',
+            'phone' => 'nullable|string',
+            'mobile' => 'nullable|string',
+            'contact_person' => 'nullable|string',
+            'contact_person_number' => 'nullable|string',
 
-            'address_line1' => ['nullable', 'string'],
-            'address_line2' => ['nullable', 'string'],
-            'city' => ['nullable', 'string'],
-            'province' => ['nullable', 'string'],
-            'postal_code' => ['nullable', 'string'],
-            'country' => ['nullable', 'string'],
-            'location' => ['nullable', 'string'],
+            // address
+            'address_line1' => 'nullable|string',
+            'address_line2' => 'nullable|string',
+            'city' => 'nullable|string',
+            'province' => 'nullable|string',
+            'postal_code' => 'nullable|string',
+            'country' => 'nullable|string',
+            'location' => 'nullable|string',
 
-            'salary' => ['nullable', 'numeric'],
-            'payGrade' => ['nullable', 'string'],
-            'pay_type' => ['nullable', 'string'],
-            'factor' => ['nullable', 'numeric'],
-            'standard_hours' => ['required', 'string'],
-            'employeeType' => ['required', 'string'],
+            // compensation
+            'salary' => 'nullable|numeric',
+            'payGrade' => 'nullable|string',
+            'pay_type' => 'nullable|string',
+            'factor' => 'nullable|numeric',
+
+            'standard_hours' => 'required|string',
+            'employeeType' => 'required|string',
         ]);
 
         try {
             DB::beginTransaction();
 
-            // 1️⃣ Generate empnum
+            /* =========================
+            | EMPLOYEE NUMBER
+            ========================= */
             $latestUser = User::orderByDesc('id')->first();
+
             $newEmpnum = $latestUser
-                ? str_pad(intval($latestUser->empnum) + 1, 5, '0', STR_PAD_LEFT)
+                ? str_pad(((int)$latestUser->empnum + 1), 5, '0', STR_PAD_LEFT)
                 : '00001';
 
-            // 2️⃣ Save Employee Core Info
+            /* =========================
+            | EMPLOYEE CORE
+            ========================= */
             $employee = Employee::create([
                 'empnum' => $newEmpnum,
                 'name' => $validated['firstName'] . ' ' . $validated['lastName'],
+
                 'firstName' => $validated['firstName'],
                 'lastName' => $validated['lastName'],
                 'middleName' => $validated['middleName'] ?? null,
                 'nickName' => $validated['nickName'] ?? null,
                 'gender' => $validated['gender'] ?? null,
-                'deptCode' => $validated['department_code'] ?? null,
-                'deptName' => $validated['department_name'] ?? null,
-                'shiftCode' => $validated['shiftCode'] ?? null,
-                'payGrade' => $validated['payGrade'] ?? null,
-                'salary' => $validated['salary'] ?? null,
-                'jobCode' => $validated['job_code'] ?? null,
-                'jobTitle' => $validated['job_title'] ?? null,
-                'businessTitle' => $validated['business_title'] ?? null,
-                'employeeClass' => $validated['employee_class'] ?? null,
-                'companyCode' => $validated['company_code'] ?? null,
-                'managerId' => $validated['manager_empnum'] ?? null,
+
+                'deptCode' => $validated['department_code'],
+                'deptName' => $validated['department_name'],
+                'shiftCode' => $validated['shiftCode'],
+                'jobCode' => $validated['job_code'],
+                'jobTitle' => $validated['job_title'],
+                'businessTitle' => $validated['business_title'],
+
+                'employeeClass' => $validated['employee_class'],
+                'companyCode' => $validated['company_code'],
+                'manager_empnum' => $validated['manager_empnum'],
+
                 'location' => $validated['location'] ?? 'SPML',
                 'country' => $validated['country'] ?? null,
-                'standard_hours' => $validated['standard_hours'] ?? null,
-                'employeeType' => $validated['employeeType'] ?? null,
+
+                'standard_hours' => $validated['standard_hours'],
+                'employeeType' => $validated['employeeType'],
             ]);
 
+            EmployeeChangeLogger::logChanges(
+                $employee->id,
+                [],
+                $employee->toArray(),
+                'employee_core',
+                $validated['hire_date']
+            );
+
+            /* =========================
+            | PERSONAL INFO
+            ========================= */
             EmployeePersonalInfo::create([
                 'employee_id' => $employee->id,
-                
                 'salutation' => $validated['salutation'],
                 'prefix' => $validated['prefix'],
                 'first_name' => $validated['firstName'],
                 'last_name' => $validated['lastName'],
                 'gender' => $validated['gender'],
-                'effective_start' => $validated['hire_date'],
                 'birth_date' => $validated['birth_date'] ?? null,
                 'country_of_birth' => $validated['country_of_birth'],
                 'marital_status' => $validated['marital_status'],
                 'nationality' => $validated['nationality'],
-                'religion' => $validated['relegion'],
+                'religion' => $validated['religion'],
                 'bank_name' => $validated['bank_name'] ?? null,
                 'account_number' => $validated['account_number'] ?? null,
+                'effective_start' => $validated['hire_date'],
             ]);
 
-            // 3️⃣ Employment Info
+            /* =========================
+            | EMPLOYMENT
+            ========================= */
             EmployeeEmployment::create([
                 'employee_id' => $employee->id,
                 'company_code' => $validated['company_code'],
                 'department_code' => $validated['department_code'],
                 'job_code' => $validated['job_code'],
                 'manager_empnum' => $validated['manager_empnum'],
-                'hire_date' => $validated['hire_date'],
                 'status' => $validated['status'],
+                'hire_date' => $validated['hire_date'],
                 'effective_start' => $validated['hire_date'],
             ]);
 
-            // 4️⃣ Contact Info
+            /* =========================
+            | CONTACT
+            ========================= */
             EmployeeContact::create([
                 'employee_id' => $employee->id,
                 'email' => $validated['email'] ?? null,
                 'phone' => $validated['phone'] ?? null,
                 'mobile' => $validated['mobile'] ?? null,
-                'type' => 'phone',
                 'contact_person' => $validated['contact_person'] ?? null,
                 'contact_person_number' => $validated['contact_person_number'] ?? null,
             ]);
 
-            // 5️⃣ Address Info
+            /* =========================
+            | ADDRESS
+            ========================= */
             EmployeeAddress::create([
                 'employee_id' => $employee->id,
                 'type' => 'home',
@@ -166,7 +200,9 @@ class EmployeeController extends Controller
                 'effective_start' => $validated['hire_date'],
             ]);
 
-            // 6️⃣ Compensation Info
+            /* =========================
+            | COMPENSATION
+            ========================= */
             EmployeeCompensation::create([
                 'employee_id' => $employee->id,
                 'base_salary' => $validated['salary'] ?? null,
@@ -176,19 +212,19 @@ class EmployeeController extends Controller
                 'effective_start' => $validated['hire_date'],
             ]);
 
-            // 7️⃣ Generate unique username
+            /* =========================
+            | USER CREATION
+            ========================= */
             $baseUsername = strtolower(substr($validated['firstName'], 0, 1) . $validated['lastName']);
             $username = $baseUsername;
             $counter = 1;
 
             while (User::where('username', $username)->exists()) {
-                $username = $baseUsername . $counter;
-                $counter++;
+                $username = $baseUsername . $counter++;
             }
 
-            // 8️⃣ Create User record
             User::create([
-                'name' => $validated['firstName'] . ' ' . $validated['lastName'],
+                'name' => $employee->name,
                 'email' => $validated['email'] ?? $newEmpnum . '@company.local',
                 'username' => $username,
                 'empnum' => $newEmpnum,
@@ -198,139 +234,97 @@ class EmployeeController extends Controller
 
             DB::commit();
 
-            return back()->with('success', 'Employee and User created successfully.');
+            return back()->with('success', 'Employee created successfully.');
 
         } catch (Throwable $e) {
             DB::rollBack();
-            return back()->with('error', 'Failed to save employee: ' . $e->getMessage());
+            return back()->with('error', $e->getMessage());
         }
     }
 
+    /* =====================================================
+    | UPDATE EMPLOYMENT
+    ===================================================== */
     public function updateEmployment(Request $request, Employee $employee)
     {
         $data = $request->validate([
-            'company_code'     => 'required|string',
-            'department_code'  => 'required|string',
-            'job_code'         => 'required|string',
-            'manager_empnum'   => 'required|string',
-            'status'           => 'required|string',
-            'hire_date'        => 'required|date',
-            'termination_date' => 'nullable|date',
-            'effective_start'  => 'required|date',
-            'business_unit'    => 'required|string',
-            'division'         => 'required|string',
-            'cost_center'      => 'required|string',
-            'channel_code'     => 'required|string',
-            'line_code'        => 'required|string',
-            'project'          => 'required|string',
-            'account_code'     => 'required|string',
-            'intercompany'     => 'required|string',
-            'regular_temp'     => 'required|string',
+            'company_code' => 'required|string',
+            'department_code' => 'required|string',
+            'job_code' => 'required|string',
+            'manager_empnum' => 'required|string',
+            'status' => 'required|string',
+            'hire_date' => 'required|date',
+            'effective_start' => 'required|date',
+
+            'business_unit' => 'nullable|string',
+            'division' => 'nullable|string',
+            'cost_center' => 'nullable|string',
+            'channel_code' => 'nullable|string',
+            'line_code' => 'nullable|string',
+            'project' => 'nullable|string',
+            'account_code' => 'nullable|string',
+            'intercompany' => 'nullable|string',
+            'regular_temp' => 'nullable|string',
         ]);
 
         DB::transaction(function () use ($employee, $data) {
 
-            // 1️⃣ Close previous employment record
-            $currentEmployment = $employee->currentEmployment();
+            $current = EmployeeEmployment::where('employee_id', $employee->id)
+                ->whereNull('effective_end')
+                ->first();
 
-            if ($currentEmployment) {
-                $currentEmployment->update([
-                    'effective_end' => Carbon::parse($data['effective_start'])->subDay(),
+            if ($current) {
+                $current->update([
+                    'effective_end' => now()->toDateString(),
+                    'status' => 'Inactive',
                 ]);
             }
 
-            // 2️⃣ Create new effective-dated record
-            $employee->employments()->create([
-                ...$data,
+            $new = EmployeeEmployment::create([
+                'employee_id' => $employee->id,
+
+                'company_code' => $data['company_code'],
+                'department_code' => $data['department_code'],
+                'job_code' => $data['job_code'],
+                'manager_empnum' => $data['manager_empnum'],
+
+                'status' => 'Active',
+                'hire_date' => $data['hire_date'],
                 'effective_start' => $data['effective_start'],
-                'effective_end'   => null, // or 9999-12-31 if that's your standard
+
+                'business_unit' => $data['business_unit'] ?? null,
+                'division' => $data['division'] ?? null,
+                'cost_center' => $data['cost_center'] ?? null,
+                'channel_code' => $data['channel_code'] ?? null,
+                'line_code' => $data['line_code'] ?? null,
+                'project' => $data['project'] ?? null,
+                'account_code' => $data['account_code'] ?? null,
+                'intercompany' => $data['intercompany'] ?? null,
+                'regular_temp' => $data['regular_temp'] ?? null,
             ]);
 
-            // 3️⃣ Sync master table
             $employee->update([
-                'companyCode'       => $data['company_code'],
-                'deptCode'          => $data['department_code'],
-                'jobCode'           => $data['job_code'],
-                'managerId'         => $data['manager_empnum'],
-                'business_unit'    => $data['business_unit'],
-                'division'         => $data['division'],
-                'cost_center'      => $data['cost_center'],
-                'channel_code'     => $data['channel_code'],
-                'line_code'        => $data['line_code'],
-                'project'          => $data['project'],
-                'account_code'     => $data['account_code'],
-                'intercompany'     => $data['intercompany'],
-                'regular_temp'     => $data['regular_temp'],
+                'companyCode' => $data['company_code'],
+                'deptCode' => $data['department_code'],
+                'jobCode' => $data['job_code'],
+                'manager_empnum' => $data['manager_empnum'],
             ]);
+
+            EmployeeChangeLogger::logChanges(
+                $employee->id,
+                $current?->toArray() ?? [],
+                $new->toArray(),
+                'employee_employment',
+                $data['effective_start']
+            );
         });
 
         return back()->with('success', 'Employment updated successfully.');
     }
 
-    public function updateGovernmentIds(Request $request, Employee $employee)
-    {
-        $data = $request->validate([
-            'tin' => 'nullable|string|max:50',
-            'sss' => 'nullable|string|max:50',
-            'pagibig' => 'nullable|string|max:50',
-            'philhealth' => 'nullable|string|max:50',
-        ]);
-
-        $employee->nationalIds()->updateOrCreate([], $data);
-
-        return back()->with('success', 'Government IDs updated.');
-    }
-
-    public function updateAddress(Request $request, Employee $employee)
-    {
-        $data = $request->validate([
-            'address_line1'  => 'nullable|string|max:50',
-            'address_line2'  => 'nullable|string|max:50',
-            'type'           => 'nullable|string|max:50',
-            'city'           => 'nullable|string|max:50',
-            'province'       => 'nullable|string|max:50',
-            'postal_code'    => 'nullable|string|max:50',
-            'country'        => 'nullable|string|max:50',
-            'effective_start'=> 'required|date',
-        ]);
-
-        DB::transaction(function () use ($employee, $data) {
-
-            // 1️⃣ Close current address record
-            $currentAddress = $employee->addressAsOf(Carbon::parse($data['effective_start']));
-
-            if ($currentAddress) {
-                $currentAddress->update([
-                    'effective_end' => Carbon::parse($data['effective_start'])->subDay(),
-                ]);
-            }
-
-            // 2️⃣ Create new effective-dated address record
-            $employee->addresses()->create([
-                ...$data,
-                'effective_start' => $data['effective_start'],
-                'effective_end'   => null, // or '9999-12-31'
-            ]);
-        });
-
-        return back()->with('success', 'Address updated successfully.');
-    }
-
-    public function updateContact(Request $request, Employee $employee)
-    {
-        $data = $request->validate([
-            'email' => 'nullable|string|max:50',
-            'phone' => 'nullable|string|max:50',
-            'mobile' => 'nullable|string|max:50',
-            'contact_person' => 'nullable|string|max:50',
-            'contact_person_number' => 'nullable|string|max:50',
-        ]);
-
-        $employee->contacts()->updateOrCreate([], $data);
-
-        return back()->with('success', 'Contact information updated.');
-    }
- 
+    /* =====================================================
+    | UPDATE PERSONAL INFO
+    ===================================================== */
     public function updatePersonal(Request $request, Employee $employee)
     {
         $data = $request->validate([
@@ -349,128 +343,214 @@ class EmployeeController extends Controller
             'country_of_birth' => 'nullable|string|max:50',
         ]);
 
+        $old = optional($employee->personalInfos()->first())->toArray() ?? [];
+
         $employee->personalInfos()->updateOrCreate([], $data);
 
-        return back()->with('success', 'Contact information updated.');
+        EmployeeChangeLogger::logChanges(
+            $employee->id,
+            $old,
+            $data,
+            'personal_info'
+        );
+
+        return back()->with('success', 'Personal info updated.');
     }
 
-    public function updateCompensation(Request $request, Employee $employee)
+    /* =====================================================
+    | CONTACT
+    ===================================================== */
+    public function updateContact(Request $request, Employee $employee)
     {
         $data = $request->validate([
-            'base_salary' => 'nullable|numeric',
-            'effective_start' => 'date',
-            'pay_grade' => 'nullable|numeric',
-            'pay_type' => 'nullable|in:Daily,Weekly,Semi-Monthly,Monthly',
-            'factor' => 'nullable|numeric',
-
-            'benefits'                => 'nullable|array',
-            'benefits.*.id'           => 'nullable|exists:employee_benefits,id',
-            'benefits.*.name'         => 'required|string',
-            'benefits.*.frequency'    => 'required|string',
-            'benefits.*.amount'       => 'nullable|numeric',
-            'benefits.*.taxable'      => 'required|boolean',
+            'email' => 'nullable|string|max:50',
+            'phone' => 'nullable|string|max:50',
+            'mobile' => 'nullable|string|max:50',
+            'contact_person' => 'nullable|string|max:50',
+            'contact_person_number' => 'nullable|string|max:50',
         ]);
 
-        $employee->compensationRecords()->updateOrCreate([], [
-            'effective_start' => $data['effective_start'] ?? null,
-            'base_salary' => $data['base_salary'] ?? null,
-            'pay_grade'   => $data['pay_grade'] ?? null,
-            'pay_type'    => $data['pay_type'] ?? null,
-            'factor'      => $data['factor'] ?? null,
-        ]);
+        $old = optional($employee->contacts()->first())->toArray() ?? [];
 
-        $submittedBenefits = collect($data['benefits'] ?? []);
+        $employee->contacts()->updateOrCreate([], $data);
 
-        // Existing benefit IDs in database
-        $existingIds = $employee->benefits()->pluck('id');
+        EmployeeChangeLogger::logChanges(
+            $employee->id,
+            $old,
+            $data,
+            'contact'
+        );
 
-        // IDs sent from frontend
-        $submittedIds = $submittedBenefits->pluck('id')->filter();
+        return back()->with('success', 'Contact updated.');
+    }
 
-        /*
-        ---------------------------------------------------
-        DELETE REMOVED BENEFITS
-        ---------------------------------------------------
-        */
-        $idsToDelete = $existingIds->diff($submittedIds);
+public function updateGovernmentIds(Request $request, Employee $employee)
+{
+    $data = $request->validate([
+        'tin'        => 'nullable|string|max:50',
+        'sss'        => 'nullable|string|max:50',
+        'pagibig'    => 'nullable|string|max:50',
+        'philhealth' => 'nullable|string|max:50',
+    ]);
 
-        if ($idsToDelete->isNotEmpty()) {
-            $employee->benefits()->whereIn('id', $idsToDelete)->delete();
+    $old = $employee->nationalIds()->first()?->toArray() ?? [];
+
+    $new = $employee->nationalIds()->updateOrCreate([], $data);
+
+    // ✅ CHANGE LOG
+    EmployeeChangeLogger::logChanges(
+        $employee->id,
+        $old,
+        $new->toArray(),
+        'employee_government_ids',
+        now()
+    );
+
+    return back()->with('success', 'Government IDs updated successfully.');
+}
+
+    public function updateAddress(Request $request, Employee $employee)
+{
+    $data = $request->validate([
+        'address_line1'   => 'nullable|string|max:50',
+        'address_line2'   => 'nullable|string|max:50',
+        'type'            => 'nullable|string|max:50',
+        'city'            => 'nullable|string|max:50',
+        'province'        => 'nullable|string|max:50',
+        'postal_code'     => 'nullable|string|max:50',
+        'country'         => 'nullable|string|max:50',
+        'effective_start' => 'required|date',
+    ]);
+
+    DB::transaction(function () use ($employee, $data) {
+
+        $current = $employee->addressAsOf(Carbon::parse($data['effective_start']));
+
+        if ($current) {
+            $current->update([
+                'effective_end' => Carbon::parse($data['effective_start'])->subDay(),
+            ]);
         }
 
+        $newAddress = $employee->addresses()->create([
+            ...$data,
+            'effective_end' => null,
+        ]);
+
+        // ✅ CHANGE LOG
+        EmployeeChangeLogger::logChanges(
+            $employee->id,
+            $current?->toArray() ?? [],
+            $newAddress->toArray(),
+            'employee_address',
+            $data['effective_start']
+        );
+    });
+
+    return back()->with('success', 'Address updated successfully.');
+}
+
+public function updateCompensation(Request $request, Employee $employee)
+{
+    $data = $request->validate([
+        'base_salary'     => 'nullable|numeric',
+        'effective_start' => 'nullable|date',
+        'pay_grade'       => 'nullable|string',
+        'pay_type'        => 'nullable|in:Daily,Weekly,Semi-Monthly,Monthly',
+        'factor'          => 'nullable|numeric',
+
+        'benefits'                => 'nullable|array',
+        'benefits.*.id'           => 'nullable|integer',
+        'benefits.*.name'         => 'required|string',
+        'benefits.*.frequency'    => 'required|string',
+        'benefits.*.amount'       => 'nullable|numeric',
+        'benefits.*.taxable'      => 'required|boolean',
+    ]);
+
+    DB::transaction(function () use ($employee, $data) {
+
+        $oldComp = $employee->compensationRecords()->latest()->first()?->toArray() ?? [];
+
+        $newComp = $employee->compensationRecords()->updateOrCreate([], [
+            'effective_start' => $data['effective_start'] ?? null,
+            'base_salary'     => $data['base_salary'] ?? null,
+            'pay_grade'       => $data['pay_grade'] ?? null,
+            'pay_type'        => $data['pay_type'] ?? null,
+            'factor'          => $data['factor'] ?? null,
+        ]);
+
         /*
-        ---------------------------------------------------
-        CREATE OR UPDATE BENEFITS
-        ---------------------------------------------------
+        | BENEFITS SYNC
         */
-        foreach ($submittedBenefits as $benefit) {
+        $submitted = collect($data['benefits'] ?? []);
 
-            if (!empty($benefit['id'])) {
+        $existingIds = $employee->benefits()->pluck('id');
+        $submittedIds = $submitted->pluck('id')->filter();
 
-                // UPDATE EXISTING
+        // DELETE REMOVED
+        $employee->benefits()
+            ->whereIn('id', $existingIds->diff($submittedIds))
+            ->delete();
+
+        // UPSERT
+        foreach ($submitted as $b) {
+            if (!empty($b['id'])) {
                 $employee->benefits()
-                    ->where('id', $benefit['id'])
+                    ->where('id', $b['id'])
                     ->update([
-                        'name'      => $benefit['name'],
-                        'frequency' => $benefit['frequency'],
-                        'amount'    => $benefit['amount'] ?? 0,
-                        'taxable'   => $benefit['taxable'],
+                        'name' => $b['name'],
+                        'frequency' => $b['frequency'],
+                        'amount' => $b['amount'] ?? 0,
+                        'taxable' => $b['taxable'],
                     ]);
-
             } else {
-
-                // CREATE NEW
                 $employee->benefits()->create([
-                    'name'            => $benefit['name'],
-                    'frequency'       => $benefit['frequency'],
-                    'amount'          => $benefit['amount'] ?? 0,
-                    'taxable'         => $benefit['taxable'],
+                    'name' => $b['name'],
+                    'frequency' => $b['frequency'],
+                    'amount' => $b['amount'] ?? 0,
+                    'taxable' => $b['taxable'],
                     'effective_start' => now(),
-                    'effective_end'   => '9999-12-31',
+                    'effective_end' => '9999-12-31',
                 ]);
             }
         }
 
-        return back()->with('success', 'Compensation and benefits updated successfully.');
-    }
+        // ✅ CHANGE LOG (COMPENSATION)
+        EmployeeChangeLogger::logChanges(
+            $employee->id,
+            $oldComp,
+            $newComp->toArray(),
+            'employee_compensation',
+            $data['effective_start'] ?? now()
+        );
+    });
 
+    return back()->with('success', 'Compensation updated successfully.');
+}
+
+    /* =====================================================
+    | MANAGERS + SEARCH
+    ===================================================== */
     public function getManagers()
     {
-        try {
-            $employees = Employee::query()
-                ->select('id', 'firstName', 'lastName', 'empnum')
-                ->get()
-                ->map(fn($e) => [
-                    'id' => $e->id,
-                    'empnum' => $e->empnum,
-                    'name' => $e->firstName . ' ' . $e->lastName,
-                ]);
-
-            return response()->json($employees);
-        } catch (\Exception $e) {
-            return response()->json([
-                'error' => $e->getMessage()
-            ], 500);
-        }
+        return Employee::select('empnum', 'firstName', 'lastName')
+            ->get()
+            ->map(fn ($e) => [
+                'empnum' => $e->empnum,
+                'name' => $e->firstName . ' ' . $e->lastName,
+            ]);
     }
 
     public function search(Request $request)
     {
         $empnum = $request->query('empnum');
 
-        if (!$empnum) {
-            return response()->json(null, 400);
-        }
+        if (!$empnum) return response()->json(null, 400);
 
         $employee = Employee::where('empnum', $empnum)
             ->select('id', 'empnum', 'name')
             ->first();
 
-        if (!$employee) {
-            return response()->json(null, 404);
-        }
-
-        return response()->json($employee);
+        return $employee ? response()->json($employee) : response()->json(null, 404);
     }
-
 }

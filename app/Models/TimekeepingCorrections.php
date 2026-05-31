@@ -53,7 +53,7 @@ class TimekeepingCorrections extends Model
 
     public function creator()
     {
-        return $this->belongsTo(User::class, 'created_by');
+        return $this->belongsTo(User::class, 'created_by', 'id');
     }
  
     public function approvedByUser()
@@ -64,6 +64,23 @@ class TimekeepingCorrections extends Model
     public function payrollCutOff()
     {
         return $this->belongsTo(PayrollCutOff::class);
+    }
+
+//    public function employee()
+//    {
+//        return $this->belongsTo(Employee::class, 'empnum', 'empnum');
+//    }
+
+    public function employee()
+    {
+        return $this->hasOneThrough(
+            Employee::class,
+            User::class,
+            'id',        // users.id
+            'empnum',    // employees.empnum
+            'created_by', // corrections.created_by
+            'empnum'      // users.empnum
+        );
     }
 
 }

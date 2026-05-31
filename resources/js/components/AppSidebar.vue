@@ -32,6 +32,7 @@ import {
     Wallet,
     CalendarHeart,
     LucideScanQrCode,
+    ListPlusIcon,
 } from 'lucide-vue-next';
 
 import AppLogo from './AppLogo.vue';
@@ -58,6 +59,7 @@ const canManagePayroll = user?.permissions?.includes('manage payroll') ?? false;
 const canManageMedical = user?.permissions?.includes('manage medical') ?? false;
 const canManageEmployees = user?.permissions?.includes('manage employees') ?? false;
 const canManageHoliday = user?.permissions?.includes('manage holiday') ?? false;
+const canManagePicklist = user?.permissions?.includes('manage picklist') ?? false;
 
 /**
  * MAIN NAVIGATION
@@ -183,6 +185,14 @@ if (canManageMedical) {
         title: 'MRA Management',
         href: route('medical.approval.index'),
         icon: HandCoins,
+    });
+}
+
+if (canManagePicklist) {
+    adminChildren.push({
+        title: 'Picklist Management',
+        href: route('picklists.index'),
+        icon: ListPlusIcon,
     });
 }
 

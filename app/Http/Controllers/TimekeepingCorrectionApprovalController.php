@@ -24,7 +24,7 @@ class TimekeepingCorrectionApprovalController extends Controller
     */
 
     // Get all employee empnum under current manager
-    $subordinates = Employee::where('managerId', $user->empnum)
+    $subordinates = Employee::where('manager_empnum', $user->empnum)
         ->pluck('empnum');
 
     return Inertia::render('approvals/TimekeepingCorrections', [

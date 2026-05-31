@@ -15,30 +15,6 @@ class DashboardController extends Controller
 {
     public function __invoke()
     {
-        $user = Auth::user();
-
-        /**
-         * =====================================================
-         * ROLE BASED DASHBOARD
-         * =====================================================
-         */
-
-        if ($user->hasRole('super-admin')) {
-            return $this->index();
-        }
-
-        if ($user->hasRole('hr')) {
-            return $this->index();
-        }
-
-        if ($user->hasRole('payroll')) {
-            return $this->index();
-        }
-
-        if ($user->hasRole('manager')) {
-            return $this->index();
-        }
-
         return $this->index();
     }
 
@@ -48,100 +24,117 @@ class DashboardController extends Controller
 
         /**
          * =====================================================
-         * CURRENT CUTOFF
+         * CURRENT PAYROLL CUTOFF
          * =====================================================
          */
 
-        $cutoff = PayrollCutoff::latest()->first();
+        $currentCutoff = PayrollCutoff::where('current', 'Yes')->first();
 
-        $fromDate = $cutoff?->from_date
-            ? Carbon::parse($cutoff->from_date)->startOfDay()
-            : now()->startOfMonth();
-
-        $toDate = $cutoff?->to_date
-            ? Carbon::parse($cutoff->to_date)->endOfDay()
-            : now()->endOfMonth();
-
+        $currentCutoffId = $currentCutoff?->id;
+//dd($currentCutoffId);
         /**
          * =====================================================
-         * OWN REQUESTS
+         * MY REQUESTS
+         *
+         * RULES:
+         * - Pending = always show
+         * - Approved/Rejected = current cutoff only
          * =====================================================
          */
 
-        $filedCorrections = TimekeepingCorrections::where(function ($q) use ($fromDate, $toDate) {
-                $q->where('status', 'Pending')
-                    ->orWhere(function ($qq) use ($fromDate, $toDate) {
-                        $qq->where('status', 'Approved')
-                           ->whereBetween('date', [$fromDate, $toDate]);
-                    });
+        $filedCorrections = TimekeepingCorrections::query()
+            ->where('created_by', $user->id)
+            ->where(function ($q) use ($currentCutoffId) {
+
+                $q->where('status', 'Pending');
+
+                $q->orWhere(function ($qq) use ($currentCutoffId) {
+                    $qq->whereIn('status', ['Approved', 'Rejected'])
+                        ->where('payroll_cut_off_id', $currentCutoffId);
+                });
             })
-            ->select('id', 'employee_name', 'date', 'status')
+            ->select([
+                'id',
+                'status',
+                'created_at',
+                'payroll_cut_off_id',
+                'rejected_reason',
+            ])
             ->latest()
             ->get();
 
-        $overtimes = Overtime::where(function ($q) use ($fromDate, $toDate) {
-                $q->where('status', 'Pending')
-                    ->orWhere(function ($qq) use ($fromDate, $toDate) {
-                        $qq->where('status', 'Approved')
-                           ->whereBetween('date', [$fromDate, $toDate]);
-                    });
+
+        $overtimes = Overtime::query()
+            ->where(function ($q) use ($currentCutoffId) {
+
+                $q->where('status', 'Pending');
+
+                $q->orWhere(function ($qq) use ($currentCutoffId) {
+                    $qq->whereIn('status', ['Approved', 'Rejected'])
+                        ->where('payroll_cut_off_id', $currentCutoffId);
+                });
             })
-            ->select('id', 'employee_name', 'date', 'status')
+            ->where('empnum', $user->empnum)
+            ->select([
+                'id',
+                'status',
+                'created_at',
+                'payroll_cut_off_id',
+            ])
             ->latest()
             ->get();
 
-        $timeoffs = Leave::where(function ($q) use ($fromDate, $toDate) {
-                $q->where('status', 'Pending')
-                    ->orWhere(function ($qq) use ($fromDate, $toDate) {
-                        $qq->where('status', 'Approved')
-                           ->whereBetween('date', [$fromDate, $toDate]);
-                    });
+        $timeoffs = Leave::query()
+            ->where(function ($q) use ($currentCutoffId) {
+
+                $q->where('status', 'Pending');
+
+                $q->orWhere(function ($qq) use ($currentCutoffId) {
+                    $qq->whereIn('status', ['Approved', 'Rejected']);
+                });
             })
-            ->select('id', 'employee_name', 'date', 'status')
+            ->where('empnum', $user->empnum)
+            ->select([
+                'id',
+                'status',
+                'created_at',
+            ])
             ->latest()
             ->get();
 
         /**
          * =====================================================
-         * APPROVALS
+         * PENDING APPROVALS
          * =====================================================
          */
 
         $approvalCorrections = TimekeepingCorrections::where('status', 'Pending')
-            ->where('approver_id', $user->id)
-            ->select('id', 'employee_name', 'date')
+            ->whereHas('creator.employee', function ($q) use ($user) {
+                $q->where('manager_empnum', $user->empnum);
+            })
+            ->with('creator.employee')
             ->latest()
             ->get();
+
 
         $approvalOvertimes = Overtime::where('status', 'Pending')
-            ->where('approver_id', $user->id)
-            ->select('id', 'employee_name', 'date')
+            ->whereHas('employee', function ($q) use ($user) {
+                $q->where('manager_empnum', $user->empnum);
+            })
+            ->with('employee')
             ->latest()
             ->get();
 
-        /**
-         * FIXED:
-         * Undefined method user() means Leave model has no relation user()
-         *
-         * Use direct manager filter instead
-         * assumes leaves table has managerId column
-         */
 
         $approvalTimeoffs = Leave::where('status', 'Pending')
-    ->whereHas('employee', function ($q) use ($user) {
-        $q->where('managerId', $user->empnum);
-    })
-    ->with('employee')
-    ->latest()
-    ->get();
+            ->whereHas('employee', function ($q) use ($user) {
+                $q->where('manager_empnum', $user->empnum);
+            })
+            ->with('employee')
+            ->latest()
+            ->get();
 
-        /**
-         * =====================================================
-         * RETURN
-         * =====================================================
-         */
-
-        return Inertia::render('Dashboard/Employee', [
+        return Inertia::render('Dashboard', [
             'filedCorrections' => $filedCorrections,
             'overtimes' => $overtimes,
             'timeoffs' => $timeoffs,
@@ -150,10 +143,8 @@ class DashboardController extends Controller
             'approvalOvertimes' => $approvalOvertimes,
             'approvalTimeoffs' => $approvalTimeoffs,
 
-            'cutoff' => [
-                'from' => $fromDate->format('Y-m-d'),
-                'to'   => $toDate->format('Y-m-d'),
-            ],
+            'cutoff' => $currentCutoff,
         ]);
+        
     }
 }

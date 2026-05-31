@@ -8,6 +8,7 @@ use Illuminate\Foundation\Inspiring;
 use App\Models\Leave;
 use App\Models\Overtime;
 use App\Models\TimekeepingCorrections;
+use Illuminate\Support\Facades\App;
 
 class HandleInertiaRequests extends Middleware
 {
@@ -32,21 +33,21 @@ class HandleInertiaRequests extends Middleware
             // Pending timekeeping corrections
             $pendingCorrectionCount = TimekeepingCorrections::where('status', 'Pending')
                 ->whereHas('creator.employee', function ($q) use ($user) {
-                    $q->where('managerId', $user->empnum);
+                    $q->where('manager_empnum', $user->empnum);
                 })
                 ->count();
 
             // Pending overtimes
             $pendingOvertimeCount = Overtime::where('status', 'Pending')
                 ->whereHas('employee', function ($q) use ($user) {
-                    $q->where('managerId', $user->empnum);
+                    $q->where('manager_empnum', $user->empnum);
                 })
                 ->count();
 
             // ✅ Pending leaves (SOURCE OF TRUTH = leaves table)
             $pendingLeaveCount = Leave::where('status', Leave::STATUS_PENDING)
             ->whereHas('employee', function ($q) use ($user) {
-                $q->where('managerId', $user->empnum);
+                $q->where('manager_empnum', $user->empnum);
             })
             ->count();
 

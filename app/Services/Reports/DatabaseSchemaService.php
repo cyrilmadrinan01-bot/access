@@ -4,152 +4,213 @@ namespace App\Services\Reports;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Cache;
 
 class DatabaseSchemaService
 {
+    /**
+     * Tables you never want exposed to report builder
+     */
     protected array $excluded = [
         'migrations',
-        'cache',
         'jobs',
         'failed_jobs',
+        'cache',
         'sessions',
         'password_reset_tokens',
     ];
 
+    /**
+     * Schema name (can be changed via env)
+     */
+    protected string $schema;
+
+    public function __construct()
+    {
+        $this->schema = config('database.connections.pgsql.schema', 'access');
+    }
+
     /*
     |--------------------------------------------------------------------------
-    | GET ALL TABLES
+    | TABLES (CACHED)
     |--------------------------------------------------------------------------
     */
 
     public function tables(): array
     {
-        $database = env('DB_DATABASE');
+        return Cache::remember('report_builder_tables_' . $this->schema, 60, function () {
 
-        $tables = DB::select("
-            SELECT TABLE_NAME
-            FROM information_schema.TABLES
-            WHERE TABLE_SCHEMA = ?
-        ", [$database]);
-
-        return collect($tables)
-            ->pluck('TABLE_NAME')
-            ->filter(fn ($table) => !in_array($table, $this->excluded))
-            ->values()
-            ->toArray();
+            return collect(DB::select("
+                SELECT tablename
+                FROM pg_tables
+                WHERE schemaname = ?
+            ", [$this->schema]))
+                ->pluck('tablename')
+                ->reject(fn ($table) => in_array($table, $this->excluded))
+                ->values()
+                ->toArray();
+        });
     }
 
     /*
     |--------------------------------------------------------------------------
-    | GET COLUMNS
+    | COLUMNS (SAFE + NORMALIZED)
     |--------------------------------------------------------------------------
     */
 
     public function columns(string $table): array
     {
-        return collect(
-            Schema::getColumnListing($table)
-        )->map(function ($column) use ($table) {
+        $columns = Schema::getColumnListing($table);
+
+        return collect($columns)->map(function ($column) use ($table) {
+
+            $type = Schema::getColumnType($table, $column);
 
             return [
+                // FULL FIELD IDENTIFIER (USED BY REPORT BUILDER)
                 'field' => "{$table}.{$column}",
+
                 'table' => $table,
                 'column' => $column,
-                'label' => str($column)
-                    ->replace('_', ' ')
-                    ->title()
-                    ->toString(),
-                'type' => Schema::getColumnType($table, $column),
+
+                // UI LABEL
+                'label' => $this->humanize($column),
+
+                // DATA TYPE (important for filter builder)
+                'type' => $type,
+
+                // UI HELPERS
+                'group' => $this->humanize($table),
+
+                // useful for frontend filtering
+                'is_numeric' => in_array($type, [
+                    'smallint',
+                    'integer',
+                    'bigint',
+                    'decimal',
+                    'float',
+                    'numeric',
+                    'real',
+                    'double',
+                    'double precision',
+                ]),
+                'is_text' => in_array($type, ['string', 'text']),
+                'is_date' => in_array($type, ['date', 'datetime', 'timestamp']),
             ];
         })->values()->toArray();
     }
 
     /*
     |--------------------------------------------------------------------------
-    | RELATIONSHIPS
+    | RELATIONSHIPS (POSTGRES CORRECT VERSION)
     |--------------------------------------------------------------------------
     */
 
     public function relationships(string $table): array
     {
-        $database = env('DB_DATABASE');
-
-        $relationships = collect(DB::select("
+        $sql = "
             SELECT
-                COLUMN_NAME,
-                REFERENCED_TABLE_NAME,
-                REFERENCED_COLUMN_NAME
-            FROM information_schema.KEY_COLUMN_USAGE
-            WHERE TABLE_SCHEMA = ?
-            AND TABLE_NAME = ?
-            AND REFERENCED_TABLE_NAME IS NOT NULL
-        ", [$database, $table]))
-        ->map(function ($relation) use ($table) {
+                kcu.column_name,
+                ccu.table_name AS foreign_table,
+                ccu.column_name AS foreign_column
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+                ON tc.constraint_name = kcu.constraint_name
+            JOIN information_schema.constraint_column_usage ccu
+                ON ccu.constraint_name = tc.constraint_name
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+              AND tc.table_name = ?
+              AND tc.table_schema = ?
+        ";
+
+        $rows = DB::select($sql, [$table, $this->schema]);
+
+        return collect($rows)->map(function ($row) use ($table) {
 
             return [
-                'table' => $relation->REFERENCED_TABLE_NAME,
-                'first' => "{$table}.{$relation->COLUMN_NAME}",
-                'second' => "{$relation->REFERENCED_TABLE_NAME}.{$relation->REFERENCED_COLUMN_NAME}",
+                'label' => "{$table} → {$row->foreign_table}",
+
+                'table' => $row->foreign_table,
+
+                // JOIN definition (used by builder engine)
+                'first' => "{$table}.{$row->column_name}",
+                'second' => "{$row->foreign_table}.{$row->foreign_column}",
+
+                // UI helper
+                'type' => 'foreign_key',
             ];
-        });
-
-        /*
-        |--------------------------------------------------------------------------
-        | AUTO empnum RELATIONS
-        |--------------------------------------------------------------------------
-        */
-
-        foreach ($this->tables() as $otherTable) {
-
-            if ($otherTable === $table) {
-                continue;
-            }
-
-            $columns = Schema::getColumnListing($otherTable);
-
-            if (in_array('empnum', $columns)) {
-
-                $relationships->push([
-                    'table' => $otherTable,
-                    'first' => "{$table}.empnum",
-                    'second' => "{$otherTable}.empnum",
-                ]);
-            }
-        }
-
-        return $relationships
-            ->unique('table')
-            ->values()
-            ->toArray();
+        })->values()->toArray();
     }
 
     /*
     |--------------------------------------------------------------------------
-    | MODULES
+    | MODULES (UI READY STRUCTURE)
     |--------------------------------------------------------------------------
     */
 
     public function modules(): array
     {
-        $modules = [];
+        return Cache::remember('report_builder_modules_' . $this->schema, 60, function () {
 
-        foreach ($this->tables() as $table) {
+            $modules = [];
 
-            $modules[$table] = [
+            foreach ($this->tables() as $table) {
 
-                'label' => str($table)
-                    ->replace('_', ' ')
-                    ->title()
-                    ->toString(),
+                $modules[$table] = [
+                    'key' => $table,
 
-                'table' => $table,
+                    // Human readable name
+                    'label' => $this->humanize($table),
 
-                'columns' => $this->columns($table),
+                    'table' => $table,
 
-                'relationships' => $this->relationships($table),
-            ];
+                    // fields grouped for UI
+                    'fields' => $this->columns($table),
+
+                    // available joins
+                    'relationships' => $this->relationships($table),
+                ];
+            }
+
+            return $modules;
+        });
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | HELPERS
+    |--------------------------------------------------------------------------
+    */
+
+    protected function humanize(string $value): string
+    {
+        return str($value)
+            ->replace('_', ' ')
+            ->title()
+            ->toString();
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | EXTRA: FIELD LOOKUP (USED BY REPORT ENGINE)
+    |--------------------------------------------------------------------------
+    */
+
+    public function allFields(): array
+    {
+        $fields = [];
+
+        foreach ($this->modules() as $module) {
+            foreach ($module['fields'] as $field) {
+                $fields[$field['field']] = $field;
+            }
         }
 
-        return $modules;
+        return $fields;
+    }
+
+    public function schema(): string
+    {
+        return $this->schema;
     }
 }

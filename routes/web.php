@@ -1,5 +1,7 @@
 <?php
 
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use App\Http\Controllers\{
     DashboardController,
     MedicalController,
@@ -58,7 +60,7 @@ Route::get('/api/employees', [EmployeeController::class, 'getManagers'])->middle
 Route::middleware(['auth', 'verified'])->group(function () {
 
     // Dashboard
-    Route::get('/dashboard', fn() => Inertia::render('Dashboard'))->name('dashboard');
+    Route::get('/dashboard', DashboardController::class)->name('dashboard');
 
     // --------------------- Medical ---------------------
     Route::prefix('medical')->group(function () {
@@ -300,17 +302,29 @@ Route::middleware(['auth', 'verified'])->group(function () {
         });
 
         //Route::middleware('can:manage device')->group(function () {
-            Route::get('/devices', [DeviceController::class, 'index'])->name('devices.index');
-            Route::post('/devices/{device}/activate', [DeviceController::class, 'activate'])->name('devices.activate');
-            Route::post('/devices/{device}/deactivate', [DeviceController::class, 'deactivate'])->name('devices.deactivate');
-            Route::post('/devices', [DeviceController::class, 'store']);
-            Route::put('/devices/{device}', [DeviceController::class, 'update']);
+        Route::prefix('devices')->middleware('can:manage device')->group(function () {
+            Route::get('/', [DeviceController::class, 'index'])->name('devices.index');
+            Route::post('/{device}/activate', [DeviceController::class, 'activate'])->name('devices.activate');
+            Route::post('/{device}/deactivate', [DeviceController::class, 'deactivate'])->name('devices.deactivate');
+            Route::post('/store', [DeviceController::class, 'store']);
+            Route::put('/{device}', [DeviceController::class, 'update']);
         
-            Route::get('/devices/device-assignment', [DeviceAssignmentController::class, 'index'])->name('device.assignment');
-            Route::get('/devices/device-assignment/{device}/users', [DeviceAssignmentController::class, 'usersByDevice'])->name('device.assignment.users');
-            Route::post('/devices/device-assignment/assign', [DeviceAssignmentController::class, 'assign'])->name('device.assignment.assign');
-            Route::post('/devices/device-assignment/remove', [DeviceAssignmentController::class, 'remove'])->name('device.assignment.remove');
-        //});
+            Route::get('/device-assignment', [DeviceAssignmentController::class, 'index'])->name('device.assignment');
+            Route::get('/device-assignment/{device}/users', [DeviceAssignmentController::class, 'usersByDevice'])->name('device.assignment.users');
+            Route::post('/device-assignment/assign', [DeviceAssignmentController::class, 'assign'])->name('device.assignment.assign');
+            Route::post('/device-assignment/remove', [DeviceAssignmentController::class, 'remove'])->name('device.assignment.remove');
+        });
+
+        Route::prefix('picklists')->name('picklists.')->group(function () {
+            Route::get('/', [PicklistController::class, 'index'])->name('index');
+            Route::get('/{type}', [PicklistController::class, 'show'])->name('show');
+            Route::post('/', [PicklistController::class, 'store'])->name('store');
+            Route::put('/{picklist}', [PicklistController::class, 'update'])->name('update');
+            Route::delete('/{picklist}', [PicklistController::class, 'destroy'])->name('destroy');
+            Route::patch('/{picklist}/toggle')->uses([PicklistController::class, 'toggle'])->name('toggle');
+
+            Route::post('/types',[PicklistController::class, 'createType'])->name('types.store');
+        });
 
     });
 });
@@ -334,7 +348,26 @@ Route::middleware(['auth'])->prefix('reports')->group(function () {
         Route::post('/', [ReportBuilderController::class,'store'])->name('reports.store');
         Route::get('/{report}', [ReportBuilderController::class,'show'])->name('reports.show');
         Route::get('/report-metadata',ReportMetadataController::class);
+        Route::post('/{report}/edit', [ReportBuilderController::class, 'edit'])->name('reports.edit');
+        Route::delete('/{report}/delete', [ReportBuilderController::class, 'destroy'])->name('reports.destroy');
     });
+/*
+Route::post('/language/switch', function (Request $request) {
+
+    $locale = $request->language;
+
+    session(['locale' => $locale]);
+
+    if (Auth::check()) {
+        Auth::user()->update([
+            'language' => $locale
+        ]);
+    }
+
+    return back();
+});
+*/
+
 
 
 // --------------------- Biometric Processor ---------------------

@@ -13,9 +13,9 @@ class MedicalApprovalController extends Controller
     public function index()
     {
         return Inertia::render('approvals/Medical', [
-            'pending' => Medical::where('status', 'PENDING')->latest()->get(),
-            'approved' => Medical::where('status', 'APPROVED')->latest()->get(),
-            'rejected' => Medical::where('status', 'REJECTED')->latest()->get(),
+            'pending' => Medical::where('status', '2')->latest()->get(),
+            'approved' => Medical::where('status', '3')->latest()->get(),
+            'rejected' => Medical::where('status', '4')->latest()->get(),
         ]);
     }
 

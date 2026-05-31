@@ -7,8 +7,9 @@ use App\Http\Controllers\Audit;
 use App\Models\Leave;
 use App\Models\LeaveApproval;
 use App\Models\Employee;
-use App\Models\ManagerDelegation;
+use App\Models\ManagerDelegations;
 use Inertia\Inertia;
+use Illuminate\Support\Facades\Auth;
 
 class LeaveApprovalController extends Controller
 {
@@ -17,15 +18,15 @@ class LeaveApprovalController extends Controller
      */
     protected function canApprove(Employee $employee): bool
     {
-        $user = auth()->user();
+        $user = Auth::user();
 
-        // Direct manager (employees.managerId stores empnum)
-        if ($employee->managerId === $user->empnum) {
+        // Direct manager (employees.manager_empnum stores empnum)
+        if ($employee->manager_empnum === $user->empnum) {
             return true;
         }
 
         // Delegated manager
-        return ManagerDelegation::where('delegate_id', $user->id)
+        return ManagerDelegations::where('delegate_id', $user->id)
             ->whereDate('valid_until', '>=', now())
             ->exists();
     }
@@ -35,11 +36,11 @@ class LeaveApprovalController extends Controller
      */
     public function index()
     {
-        $user = auth()->user();
+        $user = Auth::user();
 
         $leaves = Leave::with(['user', 'leaveType'])
             ->whereHas('user.employee', function ($q) use ($user) {
-                $q->where('managerId', $user->empnum);
+                $q->where('manager_empnum', $user->empnum);
             })
             ->orderByDesc('created_at')
             ->get();
@@ -61,14 +62,14 @@ class LeaveApprovalController extends Controller
 
         LeaveApproval::create([
             'leave_id'   => $leave->id,
-            'approver_id'=> auth()->id(),
+            'approver_id'=> Auth::user()->id(),
             'status'     => 'approved',
             'remarks'    => $request->remarks,
         ]);
 
         $leave->update([
             'status'      => Leave::STATUS_APPROVED,
-            'approved_by' => auth()->id(),
+            'approved_by' => Auth::user()->id(),
             'approved_at' => now(),
         ]);
 
@@ -94,7 +95,7 @@ class LeaveApprovalController extends Controller
 
         LeaveApproval::create([
             'leave_id'    => $leave->id,
-            'approver_id' => auth()->id(),
+            'approver_id' => Auth::user()->id(),
             'status'      => 'rejected',
             'remarks'     => $request->remarks,
         ]);

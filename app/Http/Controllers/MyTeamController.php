@@ -15,7 +15,7 @@ class MyTeamController extends Controller
         // assuming user is linked to employee via empnum or employee_id
         $employee = Employee::where('empnum', $user->empnum)->firstOrFail();
 
-        $team = Employee::where('managerId', $employee->empnum)
+        $team = Employee::where('manager_empnum', $employee->empnum)
             ->orderBy('name')
             ->get([
                 'id',

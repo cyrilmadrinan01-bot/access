@@ -50,7 +50,7 @@ class EmployeeProfileController extends Controller
                 'employees.name',
                 'employees.deptName',
                 'employees.jobTitle',
-                'employees.managerId',
+                'employees.manager_empnum',
                 'users.employeeStatus',
             ])
 
@@ -60,7 +60,7 @@ class EmployeeProfileController extends Controller
             ->when(
                 $user->hasRole('manager'),
                 fn ($query) => $query->where(
-                    'employees.managerId',
+                    'employees.manager_empnum',
                     $user->empnum
                 )
             )
@@ -183,7 +183,7 @@ class EmployeeProfileController extends Controller
                     'businessTitle',
 
                     'companyCode',
-                    'managerId',
+                    'manager_empnum',
 
                     'location',
                     'country',

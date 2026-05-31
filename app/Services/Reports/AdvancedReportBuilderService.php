@@ -4,202 +4,290 @@ namespace App\Services\Reports;
 
 use App\Models\Report;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Query\Builder;
 
 class AdvancedReportBuilderService
 {
-    public function generate(Report $report)
+    public function generate(Report $report, DatabaseSchemaService $schema)
     {
-        /*
-        |--------------------------------------------------------------------------
-        | BASE TABLE
-        |--------------------------------------------------------------------------
-        */
+        $baseTable = $report->module;
+        $schemaName = $schema->schema();
 
-        $query = DB::table($report->module);
+        $query = DB::table("{$schemaName}.{$baseTable} as base");
 
-        /*
-        |--------------------------------------------------------------------------
-        | JOINS
-        |--------------------------------------------------------------------------
-        */
+        $schemaMap = $this->buildSchemaMap($schema);
 
-        foreach ($report->joins ?? [] as $join) {
+        $this->applyJoins($query, $report->joins ?? [], $schemaMap, $baseTable);
+        $this->applySelects($query, $report, $schemaMap, $baseTable);
+        $this->applyFilters($query, $report->filters ?? [], $schemaMap, $baseTable);
+        $this->applyGroups($query, $report->groups ?? [], $schemaMap, $baseTable);
+        $this->applySorts($query, $report->sorts ?? [], $schemaMap, $baseTable);
+
+        return $query->paginate(50);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | SCHEMA MAP
+    |--------------------------------------------------------------------------
+    */
+
+    protected function buildSchemaMap(DatabaseSchemaService $schema): array
+    {
+        $map = [];
+
+        foreach ($schema->modules() as $module) {
+            foreach ($module['fields'] as $column) {
+                $key = $column['table'] . '.' . $column['column'];
+
+                $map[$key] = [
+                    'table' => $column['table'],
+                    'column' => $column['column'],
+                ];
+            }
+        }
+
+        return $map;
+    }
+
+    protected function isValidField(string $field, array $schemaMap): bool
+    {
+        return isset($schemaMap[$field]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | FIELD NORMALIZER (CRITICAL FIX)
+    |--------------------------------------------------------------------------
+    */
+
+    protected function resolveField(string $field, string $baseTable): string
+    {
+        [$table, $column] = explode('.', $field);
+
+        return $table === $baseTable
+            ? "base.{$column}"
+            : "{$table}.{$column}";
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | JOINS
+    |--------------------------------------------------------------------------
+    */
+
+    protected function applyJoins(
+        Builder $query,
+        array $joins,
+        array $schemaMap,
+        string $baseTable
+    ): void {
+        foreach ($joins as $join) {
+            $table = $join['table'] ?? null;
+            $first = $join['first'] ?? null;
+            $second = $join['second'] ?? null;
+
+            if (!$table || !$first || !$second) {
+                continue;
+            }
 
             if (
-                empty($join['table']) ||
-                empty($join['first']) ||
-                empty($join['second'])
+                !$this->isValidField($first, $schemaMap) ||
+                !$this->isValidField($second, $schemaMap)
             ) {
                 continue;
             }
 
-            $query->leftJoin(
-                $join['table'],
-                $join['first'],
-                '=',
-                $join['second']
-            );
-        }
+            $type = strtolower($join['type'] ?? 'left');
 
-        /*
-        |--------------------------------------------------------------------------
-        | SELECT COLUMNS
-        |--------------------------------------------------------------------------
-        */
+            $first = $this->resolveField($first, $baseTable);
+            $second = $this->resolveField($second, $baseTable);
+
+            $query->join($table, function ($joinQuery) use ($first, $second, $type, $table) {
+                $joinQuery->on($first, '=', $second);
+            }, null, null, $type);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | SELECTS
+    |--------------------------------------------------------------------------
+    */
+
+    protected function applySelects(
+        Builder $query,
+        Report $report,
+        array $schemaMap,
+        string $baseTable
+    ): void {
 
         $selects = [];
 
-        foreach ($report->columns ?? [] as $column) {
+        $groupFields = $report->groups ?? [];
 
-            /*
-            |--------------------------------------------------------------------------
-            | Convert:
-            | employees.firstName
-            |
-            | INTO:
-            | employees.firstName as employees_firstName
-            |--------------------------------------------------------------------------
-            */
+        foreach ($report->columns ?? [] as $field) {
 
-            $alias = str_replace('.', '_', $column);
+            if (!$this->isValidField($field, $schemaMap)) {
+                continue;
+            }
 
-            $selects[] = DB::raw("
-                {$column} as {$alias}
-            ");
+            $resolved = $this->resolveField($field, $baseTable);
+
+            // 🚨 IMPORTANT RULE
+            // If grouping is active, only allow grouped columns
+            if (!empty($groupFields) && !in_array($field, $groupFields)) {
+                continue;
+            }
+
+            $selects[] = "{$resolved} as " . str_replace('.', '__', $field);
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | AGGREGATES
-        |--------------------------------------------------------------------------
-        */
+        foreach ($report->aggregates ?? [] as $agg) {
 
-        foreach ($report->aggregates ?? [] as $aggregate) {
-
-            $function = strtoupper($aggregate['function'] ?? 'SUM');
-
-            $field = $aggregate['field'] ?? null;
-
-            $alias = $aggregate['alias'] ?? null;
+            $field = $agg['field'] ?? null;
+            $alias = $agg['alias'] ?? null;
+            $function = strtoupper($agg['function'] ?? 'SUM');
 
             if (!$field || !$alias) {
                 continue;
             }
 
-            $selects[] = DB::raw("
-                {$function}({$field}) as {$alias}
-            ");
+            if (!$this->isValidField($field, $schemaMap)) {
+                continue;
+            }
+
+            if (!in_array($function, [
+                'SUM',
+                'AVG',
+                'MIN',
+                'MAX',
+                'COUNT'
+            ])) {
+                continue;
+            }
+
+            $resolved = $this->resolveField($field, $baseTable);
+
+            $selects[] = DB::raw(
+                "{$function}({$resolved}) as {$alias}"
+            );
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | APPLY SELECT
-        |--------------------------------------------------------------------------
-        */
-
-        if (count($selects)) {
+        if (!empty($selects)) {
             $query->select($selects);
         }
+    }
 
-        /*
-        |--------------------------------------------------------------------------
-        | FILTERS
-        |--------------------------------------------------------------------------
-        */
+    /*
+    |--------------------------------------------------------------------------
+    | FILTERS
+    |--------------------------------------------------------------------------
+    */
 
-        foreach ($report->filters ?? [] as $filter) {
-
+    protected function applyFilters(
+        Builder $query,
+        array $filters,
+        array $schemaMap,
+        string $baseTable
+    ): void {
+        foreach ($filters as $filter) {
             $field = $filter['field'] ?? null;
+
+            if (!$this->isValidField($field, $schemaMap)) {
+                continue;
+            }
+
+            $field = $this->resolveField($field, $baseTable);
+
             $operator = strtoupper($filter['operator'] ?? '=');
             $value = $filter['value'] ?? null;
             $boolean = strtolower($filter['boolean'] ?? 'and');
 
-            if (!$field) {
-                continue;
+            $method = $boolean === 'or' ? 'orWhere' : 'where';
+
+            switch ($operator) {
+                case 'CONTAINS':
+                    $query->{$method}($field, 'ILIKE', "%{$value}%");
+                    break;
+
+                case 'STARTS_WITH':
+                    $query->{$method}($field, 'ILIKE', "{$value}%");
+                    break;
+
+                case 'ENDS_WITH':
+                    $query->{$method}($field, 'ILIKE', "%{$value}");
+                    break;
+
+                case 'IN':
+                    $values = is_array($value) ? $value : explode(',', $value);
+                    $query->{$method . 'In'}($field, $values);
+                    break;
+
+                case 'BETWEEN':
+                    if (is_array($value) && count($value) === 2) {
+                        $query->{$method . 'Between'}($field, $value);
+                    }
+                    break;
+
+                default:
+                    $query->{$method}($field, $operator, $value);
             }
+        }
+    }
 
-            /*
-            |--------------------------------------------------------------------------
-            | LIKE / CONTAINS
-            |--------------------------------------------------------------------------
-            */
+    /*
+    |--------------------------------------------------------------------------
+    | GROUPS
+    |--------------------------------------------------------------------------
+    */
 
-            if ($operator === 'CONTAINS') {
+    protected function applyGroups(
+        Builder $query,
+        array $groups,
+        array $schemaMap,
+        string $baseTable
+    ): void {
+        $valid = [];
 
-                $method = $boolean === 'or'
-                    ? 'orWhere'
-                    : 'where';
-
-                $query->{$method}(
-                    $field,
-                    'LIKE',
-                    "%{$value}%"
-                );
-
-                continue;
-            }
-
-            /*
-            |--------------------------------------------------------------------------
-            | STANDARD FILTERS
-            |--------------------------------------------------------------------------
-            */
-
-            if ($boolean === 'or') {
-
-                $query->orWhere(
-                    $field,
-                    $operator,
-                    $value
-                );
-
-            } else {
-
-                $query->where(
-                    $field,
-                    $operator,
-                    $value
-                );
+        foreach ($groups as $field) {
+            if ($this->isValidField($field, $schemaMap)) {
+                $valid[] = $this->resolveField($field, $baseTable);
             }
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | GROUP BY
-        |--------------------------------------------------------------------------
-        */
-
-        if (!empty($report->groups)) {
-            $query->groupBy($report->groups);
+        if (!empty($valid)) {
+            $query->groupBy($valid);
         }
+    }
 
-        /*
-        |--------------------------------------------------------------------------
-        | SORTING
-        |--------------------------------------------------------------------------
-        */
+    /*
+    |--------------------------------------------------------------------------
+    | SORTS
+    |--------------------------------------------------------------------------
+    */
 
-        foreach ($report->sorts ?? [] as $sort) {
+    protected function applySorts(
+        Builder $query,
+        array $sorts,
+        array $schemaMap,
+        string $baseTable
+    ): void {
+        foreach ($sorts as $sort) {
+            $field = $sort['field'] ?? null;
 
-            if (
-                empty($sort['field']) ||
-                empty($sort['direction'])
-            ) {
+            if (!$this->isValidField($field, $schemaMap)) {
                 continue;
             }
+
+            $field = $this->resolveField($field, $baseTable);
+
+            $dir = strtolower($sort['direction'] ?? 'asc');
 
             $query->orderBy(
-                $sort['field'],
-                $sort['direction']
+                $field,
+                in_array($dir, ['asc', 'desc']) ? $dir : 'asc'
             );
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | RETURN
-        |--------------------------------------------------------------------------
-        */
-
-        return $query->paginate(50);
     }
 }
