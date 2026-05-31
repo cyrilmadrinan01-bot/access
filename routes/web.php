@@ -38,6 +38,7 @@ use App\Http\Controllers\{
     ReportBuilderController,
     ReportMetadataController,
     PicklistController,
+    RolePermissionController,
 };
 use App\Http\Controllers\Api\BiometricLogController;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
@@ -153,12 +154,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/', [OvertimeController::class, 'store'])->name('overtime.store');
         Route::put('/{overtime}', [OvertimeController::class, 'update'])->name('overtime.update');
         Route::delete('/{overtime}', [OvertimeController::class, 'destroy'])->name('overtime.destroy');
-    });
-
-    // --------------------- Roles ---------------------
-    Route::middleware('can:manage roles')->group(function () {
-        Route::get('/users/roles', [UserRoleController::class, 'index'])->name('users.roles');
-        Route::post('/users/{user}/roles', [UserRoleController::class, 'update'])->name('users.roles.update');
     });
 
     // --------------------- Manager ---------------------
@@ -324,6 +319,22 @@ Route::middleware(['auth', 'verified'])->group(function () {
             Route::patch('/{picklist}/toggle')->uses([PicklistController::class, 'toggle'])->name('toggle');
 
             Route::post('/types',[PicklistController::class, 'createType'])->name('types.store');
+        });
+
+        // --------------------- Roles ---------------------
+        Route::middleware('can:manage roles')->group(function () {
+            Route::get('/users/roles', [UserRoleController::class, 'index'])->name('users.roles');
+            Route::post('/users/{user}/roles', [UserRoleController::class, 'update'])->name('users.roles.update');
+        });
+
+        // --------------------- Permissions ---------------------
+        Route::middleware(['auth', 'can:manage permissions'])->group(function () {
+
+            Route::get('/roles/permissions', [RolePermissionController::class, 'index'])
+                ->name('roles.permissions');
+
+            Route::post('/roles/{role}/permissions', [RolePermissionController::class, 'update'])
+                ->name('roles.permissions.update');
         });
 
     });

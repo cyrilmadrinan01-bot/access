@@ -137,7 +137,7 @@ function saveType() {
               id="type"
               v-model="typeForm.type"
               placeholder="WORK_LOCATION"
-              class="uppercase"
+              class="lowercase"
             />
 
             <p class="text-xs text-muted-foreground">

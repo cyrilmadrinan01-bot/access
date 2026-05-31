@@ -33,6 +33,7 @@ import {
     CalendarHeart,
     LucideScanQrCode,
     ListPlusIcon,
+    LockOpenIcon,
 } from 'lucide-vue-next';
 
 import AppLogo from './AppLogo.vue';
@@ -50,6 +51,7 @@ const canApproveOvertime = user?.permissions?.includes('approve overtime') ?? fa
 const canApproveLeave = user?.permissions?.includes('approve leave') ?? false;
 
 const canManageRoles = user?.permissions?.includes('manage roles') ?? false;
+const canManagePermissions = user?.permissions?.includes('manage permissions') ?? false;
 const canManageLeave = user?.permissions?.includes('manage leave') ?? false;
 const canManageCutOff = user?.permissions?.includes('manage cutoff') ?? false;
 const canManageShiftcode = user?.permissions?.includes('manage shiftcode') ?? false;
@@ -193,6 +195,14 @@ if (canManagePicklist) {
         title: 'Picklist Management',
         href: route('picklists.index'),
         icon: ListPlusIcon,
+    });
+}
+
+if (canManagePermissions) {
+    adminChildren.push({
+        title: 'Permission Management',
+        href: route('roles.permissions'),
+        icon: LockOpenIcon,
     });
 }
 
